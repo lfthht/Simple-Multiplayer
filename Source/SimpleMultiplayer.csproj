@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{B3FA94B0-A8A7-42B0-B868-BB60EA6DB83A}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>SimpleMultiplayer</RootNamespace>
+    <AssemblyName>SimpleMultiplayer</AssemblyName>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="FlagSync.cs" />
+    <Compile Include="GlobalConfig.cs" />
+    <Compile Include="Main.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="ScenarioSync.cs" />
+    <Compile Include="VesselExporter.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <WCFMetadata Include="Connected Services\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\Assembly-CSharp-firstpass.dll" />
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\Assembly-CSharp.dll" />
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.CoreModule.dll" />
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.dll" />
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.IMGUIModule.dll" />
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.InputLegacyModule.dll" />
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UI.dll" />
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UIElementsModule.dll" />
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UIModule.dll" />
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UnityWebRequestModule.dll" />
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UnityWebRequestTextureModule.dll" />
+    <Analyzer Include="..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UnityWebRequestWWWModule.dll" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\Assembly-CSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\Assembly-CSharp-firstpass.dll</HintPath>
+    </Reference>
+    <Reference Include="System" />
+    <Reference Include="UnityEngine">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UI.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UIElementsModule">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UIElementsModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UnityWebRequestModule">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UnityWebRequestModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UnityWebRequestTextureModule">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UnityWebRequestTextureModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UnityWebRequestWWWModule">
+      <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UnityWebRequestWWWModule.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
