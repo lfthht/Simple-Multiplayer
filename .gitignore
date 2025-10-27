@@ -1,0 +1,9 @@
+*.dll
+*.Up2Date
+*.cache
+*.txt
+*.json
+*.pdb
+*.vsidx
+Source/obj/Debug/.NETFramework,Version=v4.7.2.AssemblyAttributes.cs
+Source/.vs/SimpleMultiplayer/v17/.suo
