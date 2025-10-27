@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory, render_template_string
 import os
 import urllib.parse
+from urllib.parse import unquote_plus
 
 app = Flask(__name__)
 
@@ -115,7 +116,7 @@ def upload_file(user):
 @app.route('/vessels/<user>/<filename>', methods=['GET'])
 def download_file(user, filename):
     user_folder = os.path.join(UPLOAD_FOLDER_VESSELS, user)
-    decoded_filename = urllib.parse.unquote(filename)  # Decode the filename
+    decoded_filename = urllib.parse.unquote_plus(filename)  # Decode the filename
     try:
         return send_from_directory(user_folder, decoded_filename, as_attachment=True)
     except FileNotFoundError:
@@ -124,7 +125,7 @@ def download_file(user, filename):
 @app.route('/vessels/<user>/<filename>', methods=['DELETE'])
 def delete_vessel(user, filename):
     user_folder = os.path.join(UPLOAD_FOLDER_VESSELS, user)
-    decoded_filename = urllib.parse.unquote(filename)  # Decode the filename
+    decoded_filename = urllib.parse.unquote_plus(filename)  # Decode the filename
     file_path = os.path.join(user_folder, decoded_filename)
     try:
         if os.path.exists(file_path):
