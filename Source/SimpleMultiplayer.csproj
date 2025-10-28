@@ -36,6 +36,7 @@
     <Compile Include="Main.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ScenarioSync.cs" />
+    <Compile Include="TechVote.cs" />
     <Compile Include="VesselExporter.cs" />
   </ItemGroup>
   <ItemGroup>

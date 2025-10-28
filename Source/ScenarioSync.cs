@@ -118,14 +118,23 @@ namespace SimpleMultiplayer
             }
         }
 
+        //private void OnTechResearched(GameEvents.HostTargetAction<RDTech, RDTech.OperationResult> ev)
+        //{
+        //    if (ev.host == null) return;
+        //    if (ev.target != RDTech.OperationResult.Successful) return;
+        //
+        //    _suppressNextRDRefreshOnce = true;                  // NEW
+        //    StartCoroutine(UploadTechTreeFromMemoryNow(ev.host.techID));
+        //}
         private void OnTechResearched(GameEvents.HostTargetAction<RDTech, RDTech.OperationResult> ev)
         {
             if (ev.host == null) return;
             if (ev.target != RDTech.OperationResult.Successful) return;
 
-            _suppressNextRDRefreshOnce = true;                  // NEW
-            StartCoroutine(UploadTechTreeFromMemoryNow(ev.host.techID));
+            // start majority vote; do NOT push TechTree here
+            TechVote.StartLocalVote(ev.host);
         }
+
 
         private IEnumerator UploadTechTreeFromMemoryNow(string researchedId)
         {
@@ -282,7 +291,7 @@ namespace SimpleMultiplayer
                 foreach (ConfigNode tech in techTree.GetNodes("Tech"))
                     merged.AddNode(tech);
             }
-
+            bool archiveAdded = false;   
             // ScienceArchives (guard + dedupe)
             ConfigNode scienceArchive = null;
             if (!string.IsNullOrWhiteSpace(content[2]))
@@ -299,6 +308,7 @@ namespace SimpleMultiplayer
                     if (ResearchAndDevelopment.GetSubjectByID(id) != null) continue; // skip if exists locally
 
                     merged.AddNode(sciNode);
+                    archiveAdded = true;
                 }
             }
 
@@ -307,32 +317,34 @@ namespace SimpleMultiplayer
             {
                 if (sc.moduleName == "ResearchAndDevelopment")
                 {
-                    if (sc.moduleRef != null)
+                    // Only touch R&D when TechTree changed or new archive entries arrived
+                    if (techChanged || archiveAdded)
                     {
-                        sc.moduleRef.OnLoad(merged);
-                        Debug.Log("[ScenarioSync] Injected ResearchAndDevelopment scenario");
-                    }
-
-                    sc.Save(merged.CreateCopy());
-                    Debug.Log("[ScenarioSync] Overwrote ProtoScenarioModule with merged scenario");
-
-                    // Unlock techs if needed
-                    if (techTree != null && sc.moduleRef is ResearchAndDevelopment rnd)
-                    {
-                        foreach (ConfigNode techNode in techTree.GetNodes("Tech"))
+                        if (sc.moduleRef != null)
                         {
-                            string techID = techNode.GetValue("id");
-                            if (string.IsNullOrEmpty(techID)) continue;
-
-                            ProtoTechNode proto = rnd.GetTechState(techID);
-                            if (proto != null && proto.state == RDTech.State.Available)
-                            {
-                                rnd.UnlockProtoTechNode(proto);
-                                Debug.Log("[ScenarioSync] Unlocked tech: " + techID);
-                            }
+                            sc.moduleRef.OnLoad(merged);
+                            Debug.Log("[ScenarioSync] Injected ResearchAndDevelopment scenario");
                         }
-                        if (techChanged)
+
+                        sc.Save(merged.CreateCopy());
+                        Debug.Log("[ScenarioSync] Overwrote ProtoScenarioModule with merged scenario");
+
+                        // Unlock techs only when TechTree changed
+                        if (techChanged && techTree != null && sc.moduleRef is ResearchAndDevelopment rnd)
                         {
+                            foreach (ConfigNode techNode in techTree.GetNodes("Tech"))
+                            {
+                                string techID = techNode.GetValue("id");
+                                if (string.IsNullOrEmpty(techID)) continue;
+
+                                ProtoTechNode proto = rnd.GetTechState(techID);
+                                if (proto != null && proto.state == RDTech.State.Available)
+                                {
+                                    rnd.UnlockProtoTechNode(proto);
+                                    Debug.Log("[ScenarioSync] Unlocked tech: " + techID);
+                                }
+                            }
+
                             try { ResearchAndDevelopment.RefreshTechTreeUI(); } catch { }
                             _lastServerTechTree = content[1] ?? string.Empty;
                         }
@@ -341,6 +353,7 @@ namespace SimpleMultiplayer
                     yield break;
                 }
             }
+
 
             // If R&D scenario wasn't found, create and inject it
             Debug.LogWarning("[ScenarioSync] ResearchAndDevelopment scenario not found, creating new one.");

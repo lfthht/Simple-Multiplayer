@@ -408,6 +408,98 @@ def list_scenario_files(save):
     files = [f for f in os.listdir(folder) if f.endswith(".txt")]
     return jsonify(files)
 
+# -----------------------
+# Simple majority voting
+# -----------------------
+from collections import defaultdict
+import time
+
+VOTES = {}  # key: (save, techID) -> dict
+# structure: {'title': str, 'requester': str, 'cost': float,
+#             'votes': {user: True/False}, 'opened': ts, 'closed': False, 'approved': None}
+
+def _key(save, tech): return (safe_path_seg(save), safe_path_seg(tech))
+
+@app.route('/vote/start/<save>/<tech>', methods=['POST'])
+def vote_start(save, tech):
+    data = request.get_json(force=True, silent=True) or {}
+    requester = data.get('user','Player')
+    title = data.get('title', tech)
+    cost  = float(data.get('cost', 0.0))
+    k = _key(save, tech)
+    VOTES[k] = {'title': title, 'requester': requester, 'cost': cost,
+                'votes': {}, 'opened': time.time(), 'closed': False, 'approved': None}
+    return 'OK', 200
+
+@app.route('/vote/cast/<save>/<tech>', methods=['POST'])
+def vote_cast(save, tech):
+    data = request.get_json(force=True, silent=True) or {}
+    user = (data.get('user') or 'Player').strip()
+    vraw = data.get('vote', False)
+    vote = vraw if isinstance(vraw, bool) else str(vraw).strip().lower() in ('1','true','yes','y','t')
+
+    k = _key(save, tech)
+    if k not in VOTES or VOTES[k].get('closed'):
+        return 'No open vote', 400
+
+    # record or overwrite this user's vote
+    VOTES[k]['votes'][user] = vote
+
+    yes = sum(1 for v in VOTES[k]['votes'].values() if v)
+    no  = sum(1 for v in VOTES[k]['votes'].values() if not v)
+    n   = yes + no
+
+    # decide as soon as two distinct users have voted:
+    # approve if yes>no, otherwise reject on tie or more no
+    if n >= 2:
+        VOTES[k]['closed'] = True
+        VOTES[k]['approved'] = (yes > no)
+
+    return 'OK', 200
+
+@app.route('/vote/status/<save>/<tech>', methods=['GET'])
+def vote_status(save, tech):
+    k = _key(save, tech)
+    v = VOTES.get(k)
+    if not v:
+        return jsonify({'decided': False}), 200
+
+    yes = sum(1 for x in v['votes'].values() if x)
+    no  = sum(1 for x in v['votes'].values() if not x)
+
+    return jsonify({
+        'title': v['title'],
+        'requester': v['requester'],
+        'yes': yes,
+        'no': no,
+        'decided': v['closed'],
+        'approved': (True if v['approved'] is True else False) if v['approved'] is not None else None
+    }), 200
+
+@app.route('/vote/open/<save>', methods=['GET'])
+def vote_open(save):
+    s = safe_path_seg(save)
+    lines = []
+    for (sv, tech), v in list(VOTES.items()):
+        if sv != s or v.get('closed'): continue
+        lines.append(f"{tech}|{v['title']}|{v['requester']}")
+    return "\n".join(lines), 200, {'Content-Type': 'text/plain; charset=utf-8'}
+
+@app.route('/vote/cancel/<save>/<tech>', methods=['POST'])
+def vote_cancel(save, tech):
+    data = request.get_json(force=True, silent=True) or {}
+    user = (data.get('user') or 'Player').strip()
+    k = _key(save, tech)
+    v = VOTES.get(k)
+    if not v:
+        return 'No vote', 200
+    # only requester can cancel
+    if user == v.get('requester'):
+        v['closed'] = True
+        v['approved'] = False
+    return 'OK', 200
+
+
 if __name__ == '__main__':
     print(f"Serving vessels from: {UPLOAD_FOLDER_VESSELS}")
     print(f"Serving flags from: {UPLOAD_FOLDER_FLAGS}")
