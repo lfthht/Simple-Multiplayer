@@ -27,6 +27,10 @@ namespace SimpleMultiplayer
         {
             GameEvents.onLevelWasLoadedGUIReady.Add(OnLevelReady);
             GameEvents.onGameStateSaved.Add(OnGameStateSaved); // keep only this one
+
+            // NEW: push ScienceArchives immediately when science is awarded via antenna transmit (in flight)
+            GameEvents.OnScienceRecieved.Add(OnScienceRecieved);
+
             Debug.Log("[ScenarioSync] Initialized");
         }
 
@@ -34,6 +38,8 @@ namespace SimpleMultiplayer
         {
             GameEvents.onLevelWasLoadedGUIReady.Remove(OnLevelReady);
             GameEvents.onGameStateSaved.Remove(OnGameStateSaved);
+            // NEW: unhook transmit handler
+            GameEvents.OnScienceRecieved.Remove(OnScienceRecieved);
         }
 
         private void OnLevelReady(GameScenes scene)
@@ -104,6 +110,49 @@ namespace SimpleMultiplayer
                     StartCoroutine(DownloadAndInjectMergedScenario());
                 }
             }
+        }
+
+        // NEW: event handler for science awarded; only act on antenna transmit while in flight
+        private void OnScienceRecieved(float scienceDelta, ScienceSubject subject, ProtoVessel vessel, bool reverse)
+        {
+            if (HighLogic.LoadedScene == GameScenes.FLIGHT)
+            {
+                // Defer one frame so transmit degradation is applied internally
+                StartCoroutine(UploadScienceArchiveFromMemoryNow());
+            }
+        }
+
+        // NEW: snapshot full ScienceArchives from memory and POST to server
+        private IEnumerator UploadScienceArchiveFromMemoryNow()
+        {
+            yield return null; // one frame
+
+            var rnd = ResearchAndDevelopment.Instance;
+            if (rnd == null) yield break;
+
+            // Snapshot current archive
+            var tmp = new ConfigNode();
+            rnd.OnSave(tmp);
+
+            var science = new ConfigNode();
+            foreach (var n in tmp.GetNodes("Science"))
+                science.AddNode(n);
+
+            // POST full archive; server will merge by id
+            string url = GlobalConfig.ServerUrl + "/scenarios/" + GlobalConfig.sharedSaveId + "/ScienceArchives";
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(science.ToString());
+            var www = new UnityWebRequest(url, "POST")
+            {
+                uploadHandler = new UploadHandlerRaw(bytes),
+                downloadHandler = new DownloadHandlerBuffer()
+            };
+            www.SetRequestHeader("Content-Type", "text/plain; charset=utf-8");
+            yield return www.SendWebRequest();
+
+            if (!www.isNetworkError && !www.isHttpError && www.responseCode == 200)
+                Debug.Log("[ScenarioSync] Pushed ScienceArchives (antenna transmit)");
+            else
+                Debug.LogWarning("[ScenarioSync] ScienceArchives push failed (antenna): " + www.error);
         }
 
         private IEnumerator DownloadAndInjectMergedScenario()
