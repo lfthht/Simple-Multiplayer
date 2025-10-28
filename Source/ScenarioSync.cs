@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
 using UnityEngine.Networking;
+using KSP.UI.Screens;
 
 namespace SimpleMultiplayer
 {
@@ -15,6 +16,8 @@ namespace SimpleMultiplayer
     {
         private Coroutine periodicUploadCoroutine;
         private Coroutine periodicDownloadCoroutine;
+        private static string _lastServerTechTree;
+        private static bool _suppressNextRDRefreshOnce; // NEW
 
         private static readonly string[] scenarioFiles =
         {
@@ -30,6 +33,8 @@ namespace SimpleMultiplayer
 
             // NEW: push ScienceArchives immediately when science is awarded via antenna transmit (in flight)
             GameEvents.OnScienceRecieved.Add(OnScienceRecieved);
+            GameEvents.OnTechnologyResearched.Add(OnTechResearched);
+
 
             Debug.Log("[ScenarioSync] Initialized");
         }
@@ -40,6 +45,7 @@ namespace SimpleMultiplayer
             GameEvents.onGameStateSaved.Remove(OnGameStateSaved);
             // NEW: unhook transmit handler
             GameEvents.OnScienceRecieved.Remove(OnScienceRecieved);
+            GameEvents.OnTechnologyResearched.Remove(OnTechResearched);
         }
 
         private void OnLevelReady(GameScenes scene)
@@ -90,7 +96,7 @@ namespace SimpleMultiplayer
         {
             while (true)
             {
-                yield return new WaitForSeconds(5f);
+                yield return new WaitForSecondsRealtime(5f); // was WaitForSeconds(5f)
                 if (HighLogic.LoadedScene == GameScenes.SPACECENTER)
                 {
                     Debug.Log("[ScenarioSync] Periodic sync from Space Center");
@@ -103,13 +109,63 @@ namespace SimpleMultiplayer
         {
             while (true)
             {
-                yield return new WaitForSeconds(5f);
+                yield return new WaitForSecondsRealtime(5f); // was WaitForSeconds(5f)
                 if (HighLogic.LoadedScene == GameScenes.SPACECENTER)
                 {
                     Debug.Log("[ScenarioSync] Periodic download from Space Center");
                     StartCoroutine(DownloadAndInjectMergedScenario());
                 }
             }
+        }
+
+        private void OnTechResearched(GameEvents.HostTargetAction<RDTech, RDTech.OperationResult> ev)
+        {
+            if (ev.host == null) return;
+            if (ev.target != RDTech.OperationResult.Successful) return;
+
+            _suppressNextRDRefreshOnce = true;                  // NEW
+            StartCoroutine(UploadTechTreeFromMemoryNow(ev.host.techID));
+        }
+
+        private IEnumerator UploadTechTreeFromMemoryNow(string researchedId)
+        {
+            // let R&D commit the purchase this frame
+            yield return null;
+
+            var rnd = ResearchAndDevelopment.Instance;
+            if (rnd == null || string.IsNullOrEmpty(researchedId)) yield break;
+
+            // snapshot Tech nodes exactly like persistent.sfs
+            var tmp = new ConfigNode();
+            rnd.OnSave(tmp);
+
+            var techTree = new ConfigNode();
+            foreach (var n in tmp.GetNodes("Tech"))
+            {
+                if (string.Equals(n.GetValue("id"), researchedId, StringComparison.Ordinal))
+                {
+                    techTree.AddNode(n);
+                    break;
+                }
+            }
+
+            // nothing to send if not found
+            if (techTree.values.Count == 0 && techTree.nodes.Count == 0) yield break;
+
+            string url = GlobalConfig.ServerUrl + "/scenarios/" + GlobalConfig.sharedSaveId + "/TechTree";
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(techTree.ToString());
+            var www = new UnityWebRequest(url, "POST")
+            {
+                uploadHandler = new UploadHandlerRaw(bytes),
+                downloadHandler = new DownloadHandlerBuffer()
+            };
+            www.SetRequestHeader("Content-Type", "text/plain; charset=utf-8");
+            yield return www.SendWebRequest();
+
+            if (!www.isNetworkError && !www.isHttpError && www.responseCode == 200)
+                Debug.Log("[ScenarioSync] Pushed TechTree (research " + researchedId + ")");
+            else
+                Debug.LogWarning("[ScenarioSync] TechTree push failed (" + researchedId + "): " + www.error);
         }
 
         // NEW: event handler for science awarded; only act on antenna transmit while in flight
@@ -176,6 +232,17 @@ namespace SimpleMultiplayer
                     Debug.LogWarning("[ScenarioSync] Failed to download " + requestOrder[i] + ": " + www.error);
                     yield break;
                 }
+            }
+            bool techChanged = !string.Equals(content[1] ?? string.Empty,
+                                              _lastServerTechTree ?? string.Empty,
+                                              StringComparison.Ordinal);
+
+            // NEW: skip the rebuild once on the client that just bought the tech
+            if (_suppressNextRDRefreshOnce)
+            {
+                _lastServerTechTree = content[1] ?? string.Empty;   // accept server copy
+                techChanged = false;                                // but don't rebuild UI this time
+                _suppressNextRDRefreshOnce = false;
             }
 
             // Build merged ResearchAndDevelopment scenario
@@ -263,6 +330,11 @@ namespace SimpleMultiplayer
                                 rnd.UnlockProtoTechNode(proto);
                                 Debug.Log("[ScenarioSync] Unlocked tech: " + techID);
                             }
+                        }
+                        if (techChanged)
+                        {
+                            try { ResearchAndDevelopment.RefreshTechTreeUI(); } catch { }
+                            _lastServerTechTree = content[1] ?? string.Empty;
                         }
                     }
 
