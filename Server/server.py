@@ -499,6 +499,65 @@ def vote_cancel(save, tech):
         v['approved'] = False
     return 'OK', 200
 
+# --- Orbits (minimal CSV aggregator) ---
+ORBIT_FOLDER = os.path.join(os.path.dirname(__file__), 'orbits')
+os.makedirs(ORBIT_FOLDER, exist_ok=True)
+
+def _orbit_path(save_id: str) -> str:
+    safe = save_id.replace('/', '_').replace('\\', '_')
+    return os.path.join(ORBIT_FOLDER, f"{safe}.txt")
+
+@app.route('/orbits/<save_id>.txt', methods=['GET'])
+def get_orbits(save_id):
+    path = _orbit_path(save_id)
+    if not os.path.exists(path):
+        return ("# empty\n", 200, {'Content-Type': 'text/plain; charset=utf-8'})
+    return send_from_directory(ORBIT_FOLDER, os.path.basename(path), mimetype='text/plain')
+
+@app.route('/orbits/<save_id>', methods=['POST'])
+def post_orbit(save_id):
+    """
+    Body: single CSV line
+    user,vessel,body,epochUT,sma,ecc,inc_deg,lan_deg,argp_deg,mna_rad,colorHex,updatedUT
+    Server keeps newest entry per user.
+    """
+    raw = request.get_data(as_text=True).strip()
+    if not raw: return ("bad request", 400)
+
+    path = _orbit_path(save_id)
+    existing = {}
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            for ln in f:
+                if not ln or ln.startswith('#') or ',' not in ln: continue
+                parts = ln.strip().split(',')
+                if len(parts) < 12: continue
+                user = parts[0].strip()
+                try:
+                    updated = float(parts[11])
+                except:
+                    updated = 0.0
+                existing[user] = (updated, ln.strip())
+
+    parts = raw.split(',')
+    if len(parts) < 12: return ("bad csv", 400)
+    user = parts[0].strip()
+    try:
+        updated = float(parts[11])
+    except:
+        updated = 0.0
+
+    prev = existing.get(user)
+    if prev is None or updated >= prev[0]:
+        existing[user] = (updated, raw)
+
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write("# user,vessel,body,epochUT,sma,ecc,inc_deg,lan_deg,argp_deg,mna_rad,colorHex,updatedUT\n")
+        for _, line in sorted(existing.values(), key=lambda t: t[0], reverse=True):
+            f.write(line.strip() + "\n")
+
+    return jsonify(ok=True)
+
 
 if __name__ == '__main__':
     print(f"Serving vessels from: {UPLOAD_FOLDER_VESSELS}")
