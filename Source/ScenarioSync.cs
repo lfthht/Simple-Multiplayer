@@ -14,10 +14,13 @@ namespace SimpleMultiplayer
     [KSPAddon(KSPAddon.Startup.EveryScene, false)]
     public class ScenarioSync : MonoBehaviour
     {
+        // class fields
         private Coroutine periodicUploadCoroutine;
         private Coroutine periodicDownloadCoroutine;
         private static string _lastServerTechTree;
-        private static bool _suppressNextRDRefreshOnce; // NEW
+        private static bool _suppressNextRDRefreshOnce;
+        private bool _uploadBusy; // NEW
+
 
         private static readonly string[] scenarioFiles =
         {
@@ -89,8 +92,21 @@ namespace SimpleMultiplayer
 
         private void OnGameStateSaved(Game game)
         {
-            StartCoroutine(UploadScenarioParts());
+            // Only act at KSC, and only with a valid game. Prevent overlaps.
+            if (HighLogic.LoadedScene != GameScenes.SPACECENTER) return;
+            if (game == null || HighLogic.CurrentGame == null) return;
+            if (_uploadBusy) return;
+
+            StartCoroutine(UploadScenarioPartsSafe()); // wrapper with latch
         }
+
+        private IEnumerator UploadScenarioPartsSafe()
+        {
+            _uploadBusy = true;
+            try { yield return UploadScenarioParts(); }
+            finally { _uploadBusy = false; }
+        }
+
 
         private IEnumerator PeriodicUploadLoop()
         {
@@ -373,6 +389,9 @@ namespace SimpleMultiplayer
 
         private IEnumerator UploadScenarioParts()
         {
+            // Hard guards to avoid NREs when saves fire outside KSC or during new-game flows
+            if (HighLogic.LoadedScene != GameScenes.SPACECENTER) yield break;
+            if (HighLogic.CurrentGame == null || HighLogic.CurrentGame.scenarios == null) yield break;
             // Only upload TechTree and ScienceArchives
             string[] data = new string[3]; // [0]=Sci (unused), [1]=TechTree, [2]=ScienceArchives
 
