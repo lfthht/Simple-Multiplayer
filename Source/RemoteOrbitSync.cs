@@ -238,10 +238,12 @@ namespace SimpleMultiplayer
                     RemoteMarker mk;
                     if (!_markers.TryGetValue(key, out mk))
                     {
-                        mk = new RemoteMarker(_parent, _lineMat, _scaledLayer, rec.User, rec.Color, Visual.Segments);
+                        mk = new RemoteMarker(_parent, _lineMat, _scaledLayer, rec.User, rec.Vessel, rec.Color, Visual.Segments); // <- +rec.Vessel
                         _markers[key] = mk;
                     }
                     mk.SetOrbit(orbit, rec.EpochUT);
+                    mk.SetVessel(rec.Vessel); // <- keep label fresh if vessel name changes
+
                 }
             }
 
@@ -371,7 +373,7 @@ namespace SimpleMultiplayer
 
                 // Colored label (player color)
                 GUI.color = mk.UserColor;
-                GUI.Label(rect, mk.UserName, _nameStyle);
+                GUI.Label(rect, mk.LabelText, _nameStyle);
                 GUI.color = prev;
             }
         }
@@ -558,10 +560,11 @@ namespace SimpleMultiplayer
             private Gradient _grad;
 
             private readonly string _user;
+            private string _vessel;
             private readonly Color _baseColor;
             private Vector3 _lastScreen; // from cam.WorldToScreenPoint(...)
             private double _snapshotUT;
-            public RemoteMarker(Transform parent, Material lineMat, int scaledLayer, string user, Color color, int segments)
+            public RemoteMarker(Transform parent, Material lineMat, int scaledLayer, string user, string vessel, Color color, int segments)
             {
                 _segments = segments;
 
@@ -580,6 +583,7 @@ namespace SimpleMultiplayer
                 _lr.colorGradient = _grad;
                 // User Names
                 _user = user;
+                _vessel = vessel ?? "";
                 _baseColor = color;
 
                 _dot = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -590,7 +594,7 @@ namespace SimpleMultiplayer
                 var mat = new Material(Shader.Find("Unlit/Color")); mat.color = color;
                 mr.sharedMaterial = mat;
             }
-
+            public void SetVessel(string vessel) { _vessel = vessel ?? ""; }
             public void SetOrbit(Orbit orbit, double snapshotUT)
             {
                 _orbit = orbit;
@@ -718,6 +722,7 @@ namespace SimpleMultiplayer
             public bool HasScreenPoint => _lastScreen.z > 0f;
             public Vector2 ScreenLabelPos => new Vector2(_lastScreen.x, Screen.height - _lastScreen.y); // OnGUI coords
             public string UserName => _user;
+            public string LabelText => string.IsNullOrEmpty(_vessel) ? _user : (_user + " — " + _vessel);
             public Color UserColor => _baseColor;
 
         }
