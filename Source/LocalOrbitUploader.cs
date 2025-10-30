@@ -1,7 +1,6 @@
-﻿// LocalOrbitUploader.cs  (Flight scene)
-// Uploads the active vessel's orbit every 5 seconds to /orbits/<saveId> as one CSV line.
-// Matches server.py format and RemoteOrbitSync.cs expectations.
-//
+﻿
+// Copyright (c) 2025 Julius Brockelmann
+// SPDX-License-Identifier: MIT
 // Unity 2019.4.18f1, KSP 1.12, C# 7.3
 
 using System;

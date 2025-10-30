@@ -1,5 +1,8 @@
-﻿// Copyright (c) 2025
+﻿
+// Copyright (c) 2025 Julius Brockelmann
 // SPDX-License-Identifier: MIT
+// Unity 2019.4.18f1, KSP 1.12, C# 7.3
+
 using System;
 using System.Collections;
 using System.Collections.Generic;

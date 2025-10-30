@@ -1,8 +1,11 @@
-﻿// File: GameData/SimpleMultiplayer/GlobalConfig.cs
-using System.IO;
-using UnityEngine;
+﻿
 // Copyright (c) 2025 Julius Brockelmann
 // SPDX-License-Identifier: MIT
+// Unity 2019.4.18f1, KSP 1.12, C# 7.3
+
+using System.IO;
+using UnityEngine;
+
 
 namespace SimpleMultiplayer
 {

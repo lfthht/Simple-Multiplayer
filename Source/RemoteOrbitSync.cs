@@ -1,5 +1,6 @@
-﻿// RemoteOrbitSync.cs  (Tracking Station, IMGUI menu like Main.cs + GlobalConfig persistence + decimal-safe inputs)
-// Keeps your working orbit rendering + onPreCull update (no warp ghosting).
+﻿
+// Copyright (c) 2025 Julius Brockelmann
+// SPDX-License-Identifier: MIT
 // Unity 2019.4.18f1, KSP 1.12, C# 7.3
 
 using System;
