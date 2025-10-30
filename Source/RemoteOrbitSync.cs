@@ -15,7 +15,7 @@ using KSP.UI.Screens;
 
 namespace SimpleMultiplayer
 {
-    [KSPAddon(KSPAddon.Startup.TrackingStation, false)]
+    [KSPAddon(KSPAddon.Startup.EveryScene, false)]
     public sealed class RemoteOrbitSync : MonoBehaviour
     {
         private const float PollSeconds = 0.5f;
@@ -143,7 +143,7 @@ namespace SimpleMultiplayer
                     () => _showMenu = !_showMenu,
                     () => _showMenu = !_showMenu,
                     null, null, null, null,
-                    ApplicationLauncher.AppScenes.TRACKSTATION,
+                    ApplicationLauncher.AppScenes.TRACKSTATION | ApplicationLauncher.AppScenes.MAPVIEW,
                     (Texture)icon
                 );
             }
@@ -193,6 +193,12 @@ namespace SimpleMultiplayer
         {
             var www = UnityWebRequest.Get(_url);
             yield return www.SendWebRequest();
+
+            // Only poll when visible contexts are active
+            if (!(HighLogic.LoadedScene == GameScenes.TRACKSTATION
+                  || (HighLogic.LoadedScene == GameScenes.FLIGHT && MapView.MapIsEnabled)))
+                yield break;
+
 
             if (!www.isNetworkError && !www.isHttpError)
                 ApplySnapshot(www.downloadHandler.text);
@@ -265,7 +271,8 @@ namespace SimpleMultiplayer
 
         private void OnGUI()
         {
-            if (HighLogic.LoadedScene != GameScenes.TRACKSTATION) return;
+            if (!(HighLogic.LoadedScene == GameScenes.TRACKSTATION || (HighLogic.LoadedScene == GameScenes.FLIGHT && MapView.MapIsEnabled)))
+                return;
 
             if (Event.current.type == EventType.Layout || Event.current.type == EventType.Repaint)
                 GUI.skin = HighLogic.Skin;
