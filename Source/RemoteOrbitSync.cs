@@ -26,6 +26,7 @@ namespace SimpleMultiplayer
         private Transform _parent;
         private Material _lineMat;
         private int _scaledLayer;
+        private GUIStyle _nameStyle;
 
         // ---- Visuals (same semantics as your working build) ----
         private static class Visual
@@ -260,13 +261,18 @@ namespace SimpleMultiplayer
         private void OnGUI()
         {
             if (HighLogic.LoadedScene != GameScenes.TRACKSTATION) return;
-            if (!_showMenu) return;
 
             if (Event.current.type == EventType.Layout || Event.current.type == EventType.Repaint)
-                GUI.skin = HighLogic.Skin; // same look as Main.cs
+                GUI.skin = HighLogic.Skin;
 
-            _windowRect = GUILayout.Window(GetInstanceID(), _windowRect, DrawSettingsMenu, "Remote Orbit – Settings");
+            // 1) Always draw name labels near markers
+            DrawNameLabels();
+
+            // 2) Settings window (only when toggled)
+            if (_showMenu)
+                _windowRect = GUILayout.Window(GetInstanceID(), _windowRect, DrawSettingsMenu, "Remote Orbit – Settings");
         }
+
 
         private void DrawSettingsMenu(int id)
         {
@@ -329,6 +335,46 @@ namespace SimpleMultiplayer
             GUILayout.EndVertical();
             GUI.DragWindow();
         }
+
+        private void DrawNameLabels()
+        {
+            var cam = PlanetariumCamera.Camera;
+            if (cam == null) return;
+
+            if (_nameStyle == null)
+            {
+                // Use KSP skin label, keep defaults to avoid TextRenderingModule types
+                _nameStyle = new GUIStyle(HighLogic.Skin.label)
+                {
+                    fontSize = 12,           // safe: int
+                    richText = false,        // safe: bool
+                    clipping = TextClipping.Clip // in UnityEngine (no extra ref)
+                };
+                // (No alignment/fontStyle here → avoids TextRenderingModule)
+            }
+
+            foreach (var kv in _markers)
+            {
+                var mk = kv.Value;
+                if (!mk.HasScreenPoint) continue;
+
+                // Place a little to the right of the dot
+                Vector2 p = mk.ScreenLabelPos + new Vector2(10f, -4f);
+                var rect = new Rect(p.x, p.y, 260f, 18f);
+
+                // Shadow for readability
+                var prev = GUI.color;
+                GUI.color = new Color(0f, 0f, 0f, 0.85f);
+                GUI.Label(new Rect(rect.x + 1, rect.y + 1, rect.width, rect.height), mk.UserName, _nameStyle);
+
+                // Colored label (player color)
+                GUI.color = mk.UserColor;
+                GUI.Label(rect, mk.UserName, _nameStyle);
+                GUI.color = prev;
+            }
+        }
+
+
 
         private static float ParseUiFloat(string s, float fallback)
         {
@@ -497,6 +543,11 @@ namespace SimpleMultiplayer
             private Orbit _orbit;
             private Gradient _grad;
 
+            private readonly string _user;
+            private readonly Color _baseColor;
+            private Vector3 _lastScreen; // from cam.WorldToScreenPoint(...)
+
+
             public RemoteMarker(Transform parent, Material lineMat, int scaledLayer, string user, Color color, int segments)
             {
                 _segments = segments;
@@ -514,6 +565,9 @@ namespace SimpleMultiplayer
                 // Directional gradient: head bright -> tail fades
                 BuildGradient(color);
                 _lr.colorGradient = _grad;
+                // User Names
+                _user = user;
+                _baseColor = color;
 
                 _dot = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 _dot.name = "marker";
@@ -549,6 +603,9 @@ namespace SimpleMultiplayer
                 Vector3d worldNow = _orbit.referenceBody.position + new Vector3d(relNow.x, relNow.z, relNow.y); // Y/Z swap
                 Vector3 scaledNow = ScaledSpace.LocalToScaledSpace(worldNow);
                 _dot.transform.position = scaledNow;
+
+                _lastScreen = cam.WorldToScreenPoint(scaledNow);
+
 
                 // Width/size from pixel targets clamped in world units
                 float w = PixelsToWorldAt(cam, scaledNow, Visual.OrbitPx);
@@ -646,7 +703,14 @@ namespace SimpleMultiplayer
             {
                 if (_root != null) UnityEngine.Object.Destroy(_root);
             }
+
+            public bool HasScreenPoint => _lastScreen.z > 0f;
+            public Vector2 ScreenLabelPos => new Vector2(_lastScreen.x, Screen.height - _lastScreen.y); // OnGUI coords
+            public string UserName => _user;
+            public Color UserColor => _baseColor;
+
         }
+
 
         private static Color HashColor(string s)
         {
