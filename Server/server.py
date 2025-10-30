@@ -499,64 +499,103 @@ def vote_cancel(save, tech):
         v['approved'] = False
     return 'OK', 200
 
-# --- Orbits (minimal CSV aggregator) ---
+# --- Orbits (per-user files + merged GET) ---
 ORBIT_FOLDER = os.path.join(os.path.dirname(__file__), 'orbits')
 os.makedirs(ORBIT_FOLDER, exist_ok=True)
 
-def _orbit_path(save_id: str) -> str:
-    safe = save_id.replace('/', '_').replace('\\', '_')
-    return os.path.join(ORBIT_FOLDER, f"{safe}.txt")
+def _safe_seg(s: str) -> str:
+    s = (s or "").strip()
+    return "".join(c for c in s if c.isalnum() or c in "_-.")
 
-@app.route('/orbits/<save_id>.txt', methods=['GET'])
-def get_orbits(save_id):
-    path = _orbit_path(save_id)
-    if not os.path.exists(path):
-        return ("# empty\n", 200, {'Content-Type': 'text/plain; charset=utf-8'})
-    return send_from_directory(ORBIT_FOLDER, os.path.basename(path), mimetype='text/plain')
+def _orbit_dir(save_id: str) -> str:
+    return os.path.join(ORBIT_FOLDER, _safe_seg(save_id))
+
+def _user_path(save_id: str, user: str) -> str:
+    return os.path.join(_orbit_dir(save_id), _safe_seg(user) + ".txt")
 
 @app.route('/orbits/<save_id>', methods=['POST'])
 def post_orbit(save_id):
     """
     Body: single CSV line
     user,vessel,body,epochUT,sma,ecc,inc_deg,lan_deg,argp_deg,mna_rad,colorHex,updatedUT
-    Server keeps newest entry per user.
+    Stores newest snapshot per user in its own file.
     """
-    raw = request.get_data(as_text=True).strip()
-    if not raw: return ("bad request", 400)
-
-    path = _orbit_path(save_id)
-    existing = {}
-    if os.path.exists(path):
-        with open(path, 'r', encoding='utf-8') as f:
-            for ln in f:
-                if not ln or ln.startswith('#') or ',' not in ln: continue
-                parts = ln.strip().split(',')
-                if len(parts) < 12: continue
-                user = parts[0].strip()
-                try:
-                    updated = float(parts[11])
-                except:
-                    updated = 0.0
-                existing[user] = (updated, ln.strip())
+    raw = (request.get_data(as_text=True) or "").strip()
+    if not raw or ',' not in raw:
+        return ("bad request", 400)
 
     parts = raw.split(',')
-    if len(parts) < 12: return ("bad csv", 400)
+    if len(parts) < 12:
+        return ("bad csv", 400)
+
     user = parts[0].strip()
     try:
         updated = float(parts[11])
-    except:
+    except Exception:
         updated = 0.0
 
-    prev = existing.get(user)
-    if prev is None or updated >= prev[0]:
-        existing[user] = (updated, raw)
+    d = _orbit_dir(save_id)
+    os.makedirs(d, exist_ok=True)
+    upath = _user_path(save_id, user)
 
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write("# user,vessel,body,epochUT,sma,ecc,inc_deg,lan_deg,argp_deg,mna_rad,colorHex,updatedUT\n")
-        for _, line in sorted(existing.values(), key=lambda t: t[0], reverse=True):
-            f.write(line.strip() + "\n")
+    # keep only newest for this user
+    prev_updated = -1.0
+    if os.path.exists(upath):
+        try:
+            with open(upath, 'r', encoding='utf-8') as f:
+                prev = f.read().strip()
+            if prev and ',' in prev:
+                p2 = prev.split(',')
+                if len(p2) >= 12:
+                    prev_updated = float(p2[11])
+        except Exception:
+            prev_updated = -1.0
+
+    if updated >= prev_updated:
+        with open(upath, 'w', encoding='utf-8') as f:
+            f.write(raw.strip() + "\n")
 
     return jsonify(ok=True)
+
+@app.route('/orbits/<save_id>.txt', methods=['GET'])
+def get_orbits(save_id):
+    """
+    Merges all per-user snapshots for this save into one text response.
+    """
+    d = _orbit_dir(save_id)
+    if not os.path.isdir(d):
+        return ("# empty\n", 200, {'Content-Type': 'text/plain; charset=utf-8',
+                                   'Cache-Control': 'no-store'})
+
+    merged = {}
+    for fn in os.listdir(d):
+        if not fn.lower().endswith(".txt"):
+            continue
+        path = os.path.join(d, fn)
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                line = f.readline().strip()
+            if not line or ',' not in line:
+                continue
+            parts = line.split(',')
+            if len(parts) < 12:
+                continue
+            user = parts[0].strip()
+            updated = float(parts[11])
+            prev = merged.get(user)
+            if prev is None or updated >= prev[0]:
+                merged[user] = (updated, line)
+        except Exception:
+            continue
+
+    out_lines = ["# user,vessel,body,epochUT,sma,ecc,inc_deg,lan_deg,argp_deg,mna_rad,colorHex,updatedUT"]
+    for _, line in sorted(merged.values(), key=lambda t: t[0], reverse=True):
+        out_lines.append(line)
+
+    body = "\n".join(out_lines) + "\n"
+    return (body, 200, {'Content-Type': 'text/plain; charset=utf-8',
+                        'Cache-Control': 'no-store'})
+
 
 
 if __name__ == '__main__':

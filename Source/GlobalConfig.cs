@@ -12,6 +12,7 @@ namespace SimpleMultiplayer
         public static string seedValue = "1234";                   // Default seed value
         public const string ConfigFilePath = "GameData/SimpleMultiplayer/settings.cfg";
         public static string userName = "default";                 // Default username
+        public static string userColorHex = ""; // e.g. "#00E5FF"
 
         // NEW: all clients use the same shared save id for server calls
         public static string sharedSaveId = "default";
@@ -36,6 +37,8 @@ namespace SimpleMultiplayer
                     // NEW (optional key; defaults to "default" if missing)
                     if (configNode.HasValue("SharedSaveId"))
                         sharedSaveId = (configNode.GetValue("SharedSaveId") ?? "default").Trim();
+                    if (configNode.HasValue("UserColorHex"))
+                        userColorHex = (configNode.GetValue("UserColorHex") ?? "").Trim();
                 }
                 else
                 {
@@ -61,6 +64,7 @@ namespace SimpleMultiplayer
                 // NEW: persist sharedSaveId
                 configNode.AddValue("SharedSaveId", sharedSaveId);
                 configNode.Save(ConfigFilePath);
+                configNode.AddValue("UserColorHex", userColorHex ?? "");
                 Debug.Log("[SimpleMP] Config saved.");
             }
             catch (System.Exception ex)

@@ -16,7 +16,7 @@ namespace SimpleMultiplayer
     [KSPAddon(KSPAddon.Startup.Flight, false)]
     public sealed class LocalOrbitUploader : MonoBehaviour
     {
-        private const float UploadIntervalSeconds = 5f;
+        private const float UploadIntervalSeconds = 1f;
 
         private string _postUrl;    // e.g. http://localhost:5000/orbits/default
         private bool _running;

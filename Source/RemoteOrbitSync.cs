@@ -17,8 +17,7 @@ namespace SimpleMultiplayer
     [KSPAddon(KSPAddon.Startup.TrackingStation, false)]
     public sealed class RemoteOrbitSync : MonoBehaviour
     {
-        private const float PollSeconds = 2f;
-        private const double StaleSeconds = 1e9; // set ~15 later
+        private const float PollSeconds = 0.5f;
 
         private readonly Dictionary<string, RemoteMarker> _markers = new Dictionary<string, RemoteMarker>(64);
         private string _url;
@@ -27,6 +26,7 @@ namespace SimpleMultiplayer
         private Material _lineMat;
         private int _scaledLayer;
         private GUIStyle _nameStyle;
+
 
         // ---- Visuals (same semantics as your working build) ----
         private static class Visual
@@ -42,7 +42,7 @@ namespace SimpleMultiplayer
             public static float DotPxMax = 100f;
 
 
-            public static int Segments = 360;
+            public static int Segments = 180;
         }
 
         // -------- Menu (same style as Main.cs) --------
@@ -199,7 +199,6 @@ namespace SimpleMultiplayer
 
         private void ApplySnapshot(string text)
         {
-            var nowUT = Planetarium.GetUniversalTime();
             var seen = new HashSet<string>();
 
             using (var sr = new StringReader(text ?? ""))
@@ -213,20 +212,23 @@ namespace SimpleMultiplayer
                     if (!OrbitRecord.TryParse(line, out rec)) continue;
 
                     if (rec.User == GlobalConfig.userName) continue;
-                    if (nowUT - rec.UpdatedUT > StaleSeconds) continue;
 
                     var body = FlightGlobals.Bodies.FirstOrDefault(b =>
                         string.Equals(b.bodyName, rec.Body, StringComparison.OrdinalIgnoreCase));
                     if (body == null) continue;
                     if (rec.Ecc >= 1.0) continue;
 
+                    // AFTER
+                    var ecc = rec.Ecc;
+                    if (ecc < 0) ecc = 0;
+                    if (ecc >= 1.0) ecc = 0.999999999; // keep elliptical
                     var orbit = new Orbit(
                         rec.IncDeg,
-                        Mathf.Clamp01((float)rec.Ecc),
+                        (float)ecc,
                         rec.SMA,
                         rec.LanDeg,
                         rec.ArgpDeg,
-                        rec.MnaRad * Mathf.Rad2Deg,
+                        rec.MnaRad,                    // ✅ radians
                         rec.EpochUT,
                         body);
 
@@ -239,7 +241,7 @@ namespace SimpleMultiplayer
                         mk = new RemoteMarker(_parent, _lineMat, _scaledLayer, rec.User, rec.Color, Visual.Segments);
                         _markers[key] = mk;
                     }
-                    mk.SetOrbit(orbit);
+                    mk.SetOrbit(orbit, rec.EpochUT);
                 }
             }
 
@@ -532,7 +534,6 @@ namespace SimpleMultiplayer
         }
 
         // ---------- Rendering ----------
-        // ---------- Rendering ----------
         private sealed class RemoteMarker
         {
             private readonly GameObject _root;
@@ -546,8 +547,7 @@ namespace SimpleMultiplayer
             private readonly string _user;
             private readonly Color _baseColor;
             private Vector3 _lastScreen; // from cam.WorldToScreenPoint(...)
-
-
+            private double _snapshotUT;
             public RemoteMarker(Transform parent, Material lineMat, int scaledLayer, string user, Color color, int segments)
             {
                 _segments = segments;
@@ -578,11 +578,13 @@ namespace SimpleMultiplayer
                 mr.sharedMaterial = mat;
             }
 
-            public void SetOrbit(Orbit orbit)
+            public void SetOrbit(Orbit orbit, double snapshotUT)
             {
                 _orbit = orbit;
-                RebuildWorldLine(); // parameterless overload computes head
+                _snapshotUT = snapshotUT;
+                RebuildWorldLine(); // keep your existing path builder
             }
+
 
             public void SetSegments(int segments)
             {
@@ -596,26 +598,22 @@ namespace SimpleMultiplayer
             {
                 if (_orbit == null || cam == null) return;
 
-                double nowUT = Planetarium.GetUniversalTime();
-
-                // Current head (now UT) in scaled WORLD
-                Vector3d relNow = _orbit.getRelativePositionAtUT(nowUT);
+                double ut = _snapshotUT;
+                Vector3d relNow = _orbit.getRelativePositionAtUT(ut);
                 Vector3d worldNow = _orbit.referenceBody.position + new Vector3d(relNow.x, relNow.z, relNow.y); // Y/Z swap
                 Vector3 scaledNow = ScaledSpace.LocalToScaledSpace(worldNow);
                 _dot.transform.position = scaledNow;
 
                 _lastScreen = cam.WorldToScreenPoint(scaledNow);
 
-
-                // Width/size from pixel targets clamped in world units
                 float w = PixelsToWorldAt(cam, scaledNow, Visual.OrbitPx);
                 float d = PixelsToWorldAt(cam, scaledNow, Visual.DotPx);
                 _lr.widthMultiplier = Mathf.Clamp(w, Visual.OrbitPxMin, Visual.OrbitPxMax);
                 _dot.transform.localScale = Vector3.one * Mathf.Clamp(d, Visual.DotPxMin, Visual.DotPxMax);
 
-                // Rebuild with head-aligned index 0 (uses the Vector3 overload)
                 RebuildWorldLine(scaledNow);
             }
+
 
             // ---- Overload #1: compute head (used by SetOrbit/SetSegments) ----
             private void RebuildWorldLine()
@@ -626,14 +624,14 @@ namespace SimpleMultiplayer
                     return;
                 }
 
-                // Compute current "head" in scaled space
-                double nowUT = Planetarium.GetUniversalTime();
-                Vector3d relNow = _orbit.getRelativePositionAtUT(nowUT);
+                double headUT = _snapshotUT; // was: Planetarium.GetUniversalTime()
+                Vector3d relNow = _orbit.getRelativePositionAtUT(headUT);
                 Vector3d worldNow = _orbit.referenceBody.position + new Vector3d(relNow.x, relNow.z, relNow.y);
                 Vector3 scaledNow = ScaledSpace.LocalToScaledSpace(worldNow);
 
-                RebuildWorldLine(scaledNow); // forward to overload #2
+                RebuildWorldLine(scaledNow);
             }
+
 
             // ---- Overload #2: take head explicitly (used each frame in Tick) ----
             private void RebuildWorldLine(Vector3 scaledHead)
