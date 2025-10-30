@@ -63,8 +63,8 @@ namespace SimpleMultiplayer
                 configNode.AddValue("SeedValue", seedValue);
                 // NEW: persist sharedSaveId
                 configNode.AddValue("SharedSaveId", sharedSaveId);
-                configNode.Save(ConfigFilePath);
                 configNode.AddValue("UserColorHex", userColorHex ?? "");
+                configNode.Save(ConfigFilePath);
                 Debug.Log("[SimpleMP] Config saved.");
             }
             catch (System.Exception ex)

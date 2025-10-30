@@ -78,9 +78,24 @@ namespace SimpleMultiplayer
             double argpDeg = o.argumentOfPeriapsis;     // degrees
             double mnaRad = o.getMeanAnomalyAtUT(nowUT); // RADIANS (viewer converts to deg)
 
-            // Deterministic per-user color, encoded as #RRGGBB
-            Color col = HashColor(user);
-            string colorHex = "#" + ColorUtility.ToHtmlStringRGB(col);
+            // Prefer GlobalConfig.userColorHex (accepts #RRGGBB or #RRGGBBAA), fallback to hash
+            string colorHex;
+            {
+                var raw = (GlobalConfig.userColorHex ?? "").Trim();
+                if (!string.IsNullOrEmpty(raw))
+                {
+                    if (raw[0] != '#') raw = "#" + raw;
+                    if (ColorUtility.TryParseHtmlString(raw, out _))
+                        colorHex = raw;
+                    else
+                        colorHex = "#" + ColorUtility.ToHtmlStringRGB(HashColor(user));
+                }
+                else
+                {
+                    colorHex = "#" + ColorUtility.ToHtmlStringRGB(HashColor(user));
+                }
+            }
+
 
             double updatedUT = nowUT;
 

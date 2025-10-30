@@ -492,10 +492,23 @@ namespace SimpleMultiplayer
             {
                 get
                 {
-                    if (!string.IsNullOrEmpty(ColorHex) && ColorUtility.TryParseHtmlString(ColorHex, out var c)) return c;
+                    Color c;
+                    // 1) Prefer sender-provided hex (supports #RRGGBB and #RRGGBBAA)
+                    if (!string.IsNullOrEmpty(ColorHex) && ColorUtility.TryParseHtmlString(ColorHex, out c)) return c;
+
+                    // 2) Optional local fallback (older uploaders may not send a color)
+                    var local = (GlobalConfig.userColorHex ?? "").Trim();
+                    if (!string.IsNullOrEmpty(local))
+                    {
+                        if (local[0] != '#') local = "#" + local;
+                        if (ColorUtility.TryParseHtmlString(local, out c)) return c;
+                    }
+
+                    // 3) Stable per-user hash (last resort)
                     return HashColor(User);
                 }
             }
+
 
             public static bool TryParse(string line, out OrbitRecord rec)
             {
