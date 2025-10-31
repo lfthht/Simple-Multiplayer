@@ -596,6 +596,146 @@ def get_orbits(save_id):
     return (body, 200, {'Content-Type': 'text/plain; charset=utf-8',
                         'Cache-Control': 'no-store'})
 
+# -----------------------
+# Presence (in-memory with optional .txt cache)
+# -----------------------
+import time, json, threading
+
+PRESENCE_DIR = os.path.join(os.path.dirname(__file__), 'presence')
+os.makedirs(PRESENCE_DIR, exist_ok=True)
+
+PRESENCE_LOCK = threading.RLock()
+# { user: {"scene": "Flight", "ut_epoch": 1730332800, "color": "#ffaa00", "updated": 1730332800} }
+PRESENCE = {}
+PRESENCE_TTL = 30  # seconds considered "online"
+
+def _presence_path(user: str) -> str:
+    # reuse existing path sanitizer if present
+    try:
+        safe = _safe_seg(user) if '_safe_seg' in globals() else safe_path_seg(user)
+    except:
+        safe = "".join(c for c in (user or "") if c.isalnum() or c in "_-.")
+    return os.path.join(PRESENCE_DIR, f"{safe}.txt")
+
+def _presence_load_from_disk():
+    with PRESENCE_LOCK:
+        for fn in os.listdir(PRESENCE_DIR):
+            if not fn.endswith(".txt"): continue
+            path = os.path.join(PRESENCE_DIR, fn)
+            try:
+                d = {}
+                with open(path, "r", encoding="utf-8") as f:
+                    for ln in f:
+                        ln = ln.strip()
+                        if "=" in ln:
+                            k, v = ln.split("=", 1)
+                            d[k.strip()] = v.strip()
+                user = d.get("user")
+                if not user: continue
+                ut_epoch = float(d.get("ut", d.get("ut_epoch", "0")) or 0)
+                PRESENCE[user] = {
+                    "scene": d.get("scene", "Unknown"),
+                    "ut_epoch": ut_epoch,
+                    "color": d.get("color", ""),
+                    "updated": float(d.get("updated", ut_epoch)),
+                }
+            except:
+                pass
+
+def _presence_dump_to_disk(user: str, rec: dict):
+    try:
+        with open(_presence_path(user), "w", encoding="utf-8") as f:
+            f.write(f"user={user}\n")
+            f.write(f"scene={rec.get('scene','Unknown')}\n")
+            f.write(f"ut={rec.get('ut_epoch', 0)}\n")
+            f.write(f"color={rec.get('color','')}\n")
+            f.write(f"updated={rec.get('updated', 0)}\n")
+    except:
+        pass
+
+def _presence_list():
+    now = time.time()
+    with PRESENCE_LOCK:
+        out = []
+        for user, rec in PRESENCE.items():
+            rec2 = dict(rec)
+            rec2["user"] = user
+            rec2["online"] = (now - float(rec.get("ut_epoch", 0))) < PRESENCE_TTL
+            out.append(rec2)
+        # newest first
+        out.sort(key=lambda r: r.get("ut_epoch", 0), reverse=True)
+        return out
+
+@app.route('/presence', methods=['GET'])
+def presence_list():
+    # lazy load cache only if memory is empty
+    if not PRESENCE:
+        _presence_load_from_disk()
+    items = _presence_list()
+    fmt = (request.args.get("format") or "").lower()
+    if fmt == "json":
+        return jsonify(items)
+    # default: relaxed line format per-user
+    # user=...,scene=...,ut=...,color=...,online=0/1
+    lines = []
+    for r in items:
+        online = "1" if r.get("online") else "0"
+        lines.append(
+            f"user={r.get('user')},scene={r.get('scene')},ut={r.get('ut_epoch')},color={r.get('color','')},online={online}"
+        )
+    body = "\n".join(lines) + ("\n" if lines else "")
+    return body, 200, {'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store'}
+
+@app.route('/presence/<user>', methods=['GET'])
+def presence_get(user):
+    user = unquote_plus(user)
+    with PRESENCE_LOCK:
+        rec = PRESENCE.get(user)
+    if not rec and os.path.exists(_presence_path(user)):
+        _presence_load_from_disk()
+        with PRESENCE_LOCK:
+            rec = PRESENCE.get(user)
+    if not rec:
+        return ("not found", 404)
+    now = time.time()
+    online = (now - float(rec.get("ut_epoch", 0))) < PRESENCE_TTL
+    out = dict(rec, user=user, online=online)
+    return jsonify(out)
+
+@app.route('/presence/<user>', methods=['POST'])
+def presence_post(user):
+    user = unquote_plus(user)
+    # accept JSON or form
+    try:
+        data = request.get_json(silent=True) or {}
+    except:
+        data = {}
+    scene = (data.get("scene") or request.form.get("scene") or "Unknown").strip()
+    color = (data.get("color") or request.form.get("color") or "").strip()
+    # client may send ut as epoch seconds; else use server time
+    ut_epoch = data.get("ut") or data.get("ut_epoch") or request.form.get("ut") or request.form.get("ut_epoch")
+    try:
+        ut_epoch = float(ut_epoch)
+    except:
+        ut_epoch = time.time()
+    rec = {"scene": scene, "ut_epoch": float(ut_epoch), "color": color, "updated": time.time()}
+    with PRESENCE_LOCK:
+        PRESENCE[user] = rec
+    _presence_dump_to_disk(user, rec)
+    return ("OK", 200)
+
+@app.route('/presence/<user>', methods=['DELETE'])
+def presence_delete(user):
+    user = unquote_plus(user)
+    with PRESENCE_LOCK:
+        PRESENCE.pop(user, None)
+    try:
+        os.remove(_presence_path(user))
+    except:
+        pass
+    return ("OK", 200)
+
+
 
 
 if __name__ == '__main__':

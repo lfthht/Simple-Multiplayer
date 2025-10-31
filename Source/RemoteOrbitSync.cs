@@ -98,7 +98,7 @@ namespace SimpleMultiplayer
             _uiDotMinWorldStr = Visual.DotPxMin.ToString(CultureInfo.InvariantCulture);
             _uiDotMaxWorldStr = Visual.DotPxMax.ToString(CultureInfo.InvariantCulture);
 
-            AddToolbarButton();
+            
 
             _running = true;
             StartCoroutine(PollLoop());
@@ -106,6 +106,7 @@ namespace SimpleMultiplayer
         }
 
         private void OnEnable() { Camera.onPreCull += OnCamPreCull; }
+
         private void OnDisable() { Camera.onPreCull -= OnCamPreCull; }
 
         private void OnDestroy()
@@ -118,7 +119,39 @@ namespace SimpleMultiplayer
             _markers.Clear();
 
             if (_parent != null) Destroy(_parent.gameObject);
+            GameEvents.onGUIApplicationLauncherReady.Remove(OnAppLauncherReady);
+            GameEvents.onGUIApplicationLauncherDestroyed.Remove(OnAppLauncherDestroyed);
+
             RemoveToolbarButton();
+        }
+
+        private void Awake()
+        {
+            GameEvents.onGUIApplicationLauncherReady.Add(OnAppLauncherReady);
+            GameEvents.onGUIApplicationLauncherDestroyed.Add(OnAppLauncherDestroyed);
+        }
+
+        private void OnAppLauncherReady()
+        {
+            if (ApplicationLauncher.Instance == null || _toolbarButton != null) return;
+
+            Texture icon = GameDatabase.Instance != null
+                ? GameDatabase.Instance.GetTexture("SimpleMultiplayer/Textures/icon", false)
+                : null;
+            if (icon == null) { _fallbackIcon = MakeSolid(38, 38, new Color(1f, 0.55f, 0.0f, 1f)); icon = _fallbackIcon; }
+
+            _toolbarButton = ApplicationLauncher.Instance.AddModApplication(
+                onTrue: () => { _showMenu = true; },   // open
+                onFalse: () => { _showMenu = false; },   // close
+                null, null, null, null,
+                ApplicationLauncher.AppScenes.TRACKSTATION, // <- was TRACKSTATION | MAPVIEW
+                (Texture)icon
+            );
+        }
+
+        private void OnAppLauncherDestroyed()
+        {
+            _toolbarButton = null;
         }
 
         private void OnSceneChange(GameScenes _) => _running = false;
@@ -285,7 +318,6 @@ namespace SimpleMultiplayer
                 _windowRect = GUILayout.Window(GetInstanceID(), _windowRect, DrawSettingsMenu, "Remote Orbit – Settings");
         }
 
-
         private void DrawSettingsMenu(int id)
         {
             GUILayout.BeginVertical();
@@ -385,8 +417,6 @@ namespace SimpleMultiplayer
                 GUI.color = prev;
             }
         }
-
-
 
         private static float ParseUiFloat(string s, float fallback)
         {
