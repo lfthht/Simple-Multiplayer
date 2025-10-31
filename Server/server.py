@@ -597,30 +597,30 @@ def get_orbits(save_id):
                         'Cache-Control': 'no-store'})
 
 # -----------------------
-# Presence (in-memory with optional .txt cache)
+# Presence: memory-first with per-user .txt cache
 # -----------------------
-import time, json, threading
+import os, time, threading
+from urllib.parse import unquote_plus
+from flask import request, jsonify
 
 PRESENCE_DIR = os.path.join(os.path.dirname(__file__), 'presence')
 os.makedirs(PRESENCE_DIR, exist_ok=True)
 
 PRESENCE_LOCK = threading.RLock()
-# { user: {"scene": "Flight", "ut_epoch": 1730332800, "color": "#ffaa00", "updated": 1730332800} }
+# { user: {"scene": "Flight", "ut_epoch": 1730332800.0, "color": "#ffaa00", "updated": 1730332801.0} }
 PRESENCE = {}
 PRESENCE_TTL = 30  # seconds considered "online"
 
 def _presence_path(user: str) -> str:
-    # reuse existing path sanitizer if present
-    try:
-        safe = _safe_seg(user) if '_safe_seg' in globals() else safe_path_seg(user)
-    except:
-        safe = "".join(c for c in (user or "") if c.isalnum() or c in "_-.")
+    # sanitize filename
+    safe = "".join(c for c in (user or "") if c.isalnum() or c in "_-.")
     return os.path.join(PRESENCE_DIR, f"{safe}.txt")
 
 def _presence_load_from_disk():
     with PRESENCE_LOCK:
         for fn in os.listdir(PRESENCE_DIR):
-            if not fn.endswith(".txt"): continue
+            if not fn.endswith(".txt"): 
+                continue
             path = os.path.join(PRESENCE_DIR, fn)
             try:
                 d = {}
@@ -631,11 +631,14 @@ def _presence_load_from_disk():
                             k, v = ln.split("=", 1)
                             d[k.strip()] = v.strip()
                 user = d.get("user")
-                if not user: continue
+                if not user:
+                    continue
                 ut_epoch = float(d.get("ut", d.get("ut_epoch", "0")) or 0)
+                ksp_ut = float(d.get("ksp_ut", "0") or 0)          # <-- add
                 PRESENCE[user] = {
                     "scene": d.get("scene", "Unknown"),
                     "ut_epoch": ut_epoch,
+                    "ksp_ut": ksp_ut,                               # <-- add
                     "color": d.get("color", ""),
                     "updated": float(d.get("updated", ut_epoch)),
                 }
@@ -647,7 +650,8 @@ def _presence_dump_to_disk(user: str, rec: dict):
         with open(_presence_path(user), "w", encoding="utf-8") as f:
             f.write(f"user={user}\n")
             f.write(f"scene={rec.get('scene','Unknown')}\n")
-            f.write(f"ut={rec.get('ut_epoch', 0)}\n")
+            f.write(f"ut={rec.get('ut_epoch', 0)}\n")   # epoch
+            f.write(f"ksp_ut={rec.get('ksp_ut', 0)}\n")  # <-- add
             f.write(f"color={rec.get('color','')}\n")
             f.write(f"updated={rec.get('updated', 0)}\n")
     except:
@@ -662,27 +666,28 @@ def _presence_list():
             rec2["user"] = user
             rec2["online"] = (now - float(rec.get("ut_epoch", 0))) < PRESENCE_TTL
             out.append(rec2)
-        # newest first
         out.sort(key=lambda r: r.get("ut_epoch", 0), reverse=True)
         return out
 
 @app.route('/presence', methods=['GET'])
 def presence_list():
-    # lazy load cache only if memory is empty
     if not PRESENCE:
         _presence_load_from_disk()
     items = _presence_list()
     fmt = (request.args.get("format") or "").lower()
     if fmt == "json":
         return jsonify(items)
-    # default: relaxed line format per-user
-    # user=...,scene=...,ut=...,color=...,online=0/1
     lines = []
     for r in items:
         online = "1" if r.get("online") else "0"
         lines.append(
-            f"user={r.get('user')},scene={r.get('scene')},ut={r.get('ut_epoch')},color={r.get('color','')},online={online}"
-        )
+            "user={u},scene={s},ut={ue},ksp_ut={ku},color={c},online={o}".format(
+                u=r.get('user'),
+                s=r.get('scene'),
+                ue=r.get('ut_epoch'),
+                ku=r.get('ksp_ut', 0),      # <-- add
+                c=r.get('color',''),
+                o=online))
     body = "\n".join(lines) + ("\n" if lines else "")
     return body, 200, {'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store'}
 
@@ -699,26 +704,25 @@ def presence_get(user):
         return ("not found", 404)
     now = time.time()
     online = (now - float(rec.get("ut_epoch", 0))) < PRESENCE_TTL
-    out = dict(rec, user=user, online=online)
-    return jsonify(out)
+    return jsonify(dict(rec, user=user, online=online))
 
 @app.route('/presence/<user>', methods=['POST'])
 def presence_post(user):
     user = unquote_plus(user)
-    # accept JSON or form
-    try:
-        data = request.get_json(silent=True) or {}
-    except:
-        data = {}
+    data = request.get_json(silent=True) or {}
     scene = (data.get("scene") or request.form.get("scene") or "Unknown").strip()
     color = (data.get("color") or request.form.get("color") or "").strip()
-    # client may send ut as epoch seconds; else use server time
+
     ut_epoch = data.get("ut") or data.get("ut_epoch") or request.form.get("ut") or request.form.get("ut_epoch")
-    try:
-        ut_epoch = float(ut_epoch)
-    except:
-        ut_epoch = time.time()
-    rec = {"scene": scene, "ut_epoch": float(ut_epoch), "color": color, "updated": time.time()}
+    try: ut_epoch = float(ut_epoch)
+    except: ut_epoch = time.time()
+
+    ksp_ut = data.get("ksp_ut") or request.form.get("ksp_ut")
+    try: ksp_ut = float(ksp_ut) if ksp_ut is not None else 0.0
+    except: ksp_ut = 0.0
+
+    rec = {"scene": scene, "ut_epoch": float(ut_epoch), "color": color,
+           "updated": time.time(), "ksp_ut": ksp_ut}
     with PRESENCE_LOCK:
         PRESENCE[user] = rec
     _presence_dump_to_disk(user, rec)
@@ -741,4 +745,5 @@ def presence_delete(user):
 if __name__ == '__main__':
     print(f"Serving vessels from: {UPLOAD_FOLDER_VESSELS}")
     print(f"Serving flags from: {UPLOAD_FOLDER_FLAGS}")
+    print(f"Serving presence from: {PRESENCE_DIR}")
     app.run(debug=True, port=5000)

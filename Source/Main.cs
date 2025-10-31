@@ -5,10 +5,11 @@
 
 using UnityEngine;
 using KSP.UI.Screens;
+using System;
 
 namespace SimpleMultiplayer
 {
-    [KSPAddon(KSPAddon.Startup.FlightAndKSC, false)]
+    [KSPAddon(KSPAddon.Startup.EveryScene, false)]
     public class Main : MonoBehaviour
     {
         public static Main Instance { get; private set; }
@@ -26,6 +27,88 @@ namespace SimpleMultiplayer
         private bool _colorValid = true;  // validation flag
         private Color _parsedColor = Color.white;
         private static ApplicationLauncherButton s_Button;
+        private static GUIStyle _richLabel;
+
+
+        // Presence viewer
+        private bool showPresence = false;
+        private Rect presenceRect = new Rect(520, 100, 250, 270);
+        private Vector2 presenceScroll = Vector2.zero;
+
+        private static string AgeYMD(double epochSec)
+        {
+            if (epochSec <= 0) return "0y 0m 0d";
+            var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            var dt = epoch.AddSeconds(epochSec);
+            var now = DateTime.UtcNow;
+            if (dt > now) return "0y 0m 0d";
+            var days = (int)(now - dt).TotalDays;
+            int y = days / 365; days %= 365;
+            int m = days / 30; int d = days % 30;
+            return $"{y}y {m}m {d}d";
+        }
+        private static string UtYMD(double ut)
+        {
+            if (ut <= 0) return "Y0 M0 D0";
+
+            if (GameSettings.KERBIN_TIME) // Kerbin: 6h day, 426-day year
+            {
+                const int DaySec = 6 * 60 * 60;           // 21,600
+                const int YearDays = 426;
+                const int YearSec = DaySec * YearDays;
+
+                long s = (long)ut;
+                int year = (int)(s / YearSec);
+                int dayOfYear = (int)((s % YearSec) / DaySec);
+
+                // 12 “months”: 11×35 + 41 days
+                int[] lens = { 35, 35, 35, 35, 35, 35, 35, 35, 35, 35, 35, 41 };
+                int month = 1;
+                int d = dayOfYear;
+                for (int i = 0; i < lens.Length; i++)
+                {
+                    if (d >= lens[i]) { d -= lens[i]; month++; }
+                    else break;
+                }
+                int day = d + 1;
+                return $"Y{year} M{month} D{day}";
+            }
+            else // Earth-style: 24h day, 365-day year (no leap)
+            {
+                const int DaySec = 24 * 60 * 60;          // 86,400
+                const int YearDays = 365;
+                const int YearSec = DaySec * YearDays;
+
+                long s = (long)ut;
+                int year = (int)(s / YearSec);
+                int dayOfYear = (int)((s % YearSec) / DaySec);
+
+                int[] lens = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+                int month = 1;
+                int d = dayOfYear;
+                for (int i = 0; i < lens.Length; i++)
+                {
+                    if (d >= lens[i]) { d -= lens[i]; month++; }
+                    else break;
+                }
+                int day = d + 1;
+                return $"Y{year} M{month} D{day}";
+            }
+        }
+        private static string KerbinYMD(double ut)
+        {
+            const int SecondsPerDay = 6 * 60 * 60; // 21,600
+            const int DaysPerYear = 426;
+
+            if (ut <= 0) return "Y1 D1"; // match stock KSP UI
+
+            long s = (long)Math.Floor(ut);
+            long secondsPerYear = SecondsPerDay * (long)DaysPerYear;
+
+            int year = (int)(s / secondsPerYear) + 1;                 // 1-based year
+            int day = (int)((s / SecondsPerDay) % DaysPerYear) + 1;  // 1..426
+            return $"Y{year} D{day}";
+        }
 
         private void Awake()
         {
@@ -90,7 +173,7 @@ namespace SimpleMultiplayer
 
         private void OnGUI()
         {
-            if (HighLogic.LoadedScene != GameScenes.FLIGHT && HighLogic.LoadedScene != GameScenes.SPACECENTER) return;
+            if (HighLogic.LoadedScene != GameScenes.FLIGHT && HighLogic.LoadedScene != GameScenes.SPACECENTER && HighLogic.LoadedScene != GameScenes.EDITOR) return;
 
             if (showMenu)
             {
@@ -101,6 +184,11 @@ namespace SimpleMultiplayer
             {
                 windowRect = GUILayout.Window(1, windowRect, DrawSettingsMenu, "Settings");
             }
+            if (showPresence)
+            {
+                presenceRect = GUILayout.Window(2, presenceRect, DrawPresenceWindow, "Players Online");
+            }
+
         }
 
         private void OnAppLauncherReady()
@@ -109,10 +197,13 @@ namespace SimpleMultiplayer
             if (s_Button != null) return;
 
             s_Button = ApplicationLauncher.Instance.AddModApplication(
-                onTrue: () => { showMenu = true; showSettings = false; }, // open
-                onFalse: () => { showMenu = false; showSettings = false; }, // close
+                onTrue: () => { showMenu = true; showSettings = false; },
+                onFalse: () => { showMenu = false; showSettings = false; },
                 null, null, null, null,
-                ApplicationLauncher.AppScenes.SPACECENTER | ApplicationLauncher.AppScenes.FLIGHT,
+                ApplicationLauncher.AppScenes.SPACECENTER
+              | ApplicationLauncher.AppScenes.FLIGHT
+              | ApplicationLauncher.AppScenes.VAB
+              | ApplicationLauncher.AppScenes.SPH,
                 GameDatabase.Instance.GetTexture("SimpleMultiplayer/Textures/icon", false)
             );
         }
@@ -125,11 +216,20 @@ namespace SimpleMultiplayer
         private void DrawMenu(int windowID)
         {
             GUILayout.BeginVertical();
+            if (GUILayout.Button("Open Player Viewer")) showPresence = true;
+            GUILayout.Space(6);
+            GUILayout.Space(6);
 
+            bool inFlight = HighLogic.LoadedScene == GameScenes.FLIGHT;
+            GUI.enabled = inFlight;
             if (GUILayout.Button("Export Vessel"))
             {
                 StartCoroutine(vesselExporter.ExportVesselToServer());
             }
+            GUI.enabled = true;
+
+            GUILayout.Space(6);
+
 
             GUILayout.Label("Available Vessels on Server:");
 
@@ -294,6 +394,45 @@ namespace SimpleMultiplayer
             GUILayout.EndVertical();
             GUI.DragWindow();
         }
+
+        private void DrawPresenceWindow(int id)
+        {
+            GUILayout.BeginVertical();
+            presenceScroll = GUILayout.BeginScrollView(presenceScroll, GUILayout.Height(200));
+
+            if (_richLabel == null)
+            {
+                _richLabel = new GUIStyle(GUI.skin.label) { richText = true };
+            }
+
+            var pp = PlayerPresence.Instance;
+            if (pp == null || pp.Items == null || pp.Items.Count == 0)
+            {
+                GUILayout.Label("No players online.");
+            }
+            else
+            {
+                foreach (var r in pp.Items)
+                {
+                    // resolve color
+                    Color c = Color.white;
+                    if (!string.IsNullOrEmpty(r.color) && ColorUtility.TryParseHtmlString(r.color, out var parsed))
+                        c = parsed;
+
+                    string hex = ColorUtility.ToHtmlStringRGBA(c);
+                    string userColored = $"<color=#{hex}>{r.user}</color>";
+
+                    GUILayout.Label($"{userColored}  —  {r.scene}  —  {KerbinYMD(r.kspUt)}", _richLabel);
+                }
+            }
+
+            GUILayout.EndScrollView();
+
+            if (GUILayout.Button("Close")) showPresence = false;
+            GUILayout.EndVertical();
+            GUI.DragWindow();
+        }
+
 
         private void RefreshVesselList()
         {

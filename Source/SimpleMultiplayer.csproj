@@ -35,6 +35,7 @@
     <Compile Include="GlobalConfig.cs" />
     <Compile Include="LocalOrbitUploader.cs" />
     <Compile Include="Main.cs" />
+    <Compile Include="PlayerPresence.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="RemoteOrbitSync.cs" />
     <Compile Include="ScenarioSync.cs" />
