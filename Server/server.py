@@ -812,6 +812,51 @@ def presence_delete(user):
     return ("OK", 200)
 
 
+# --- Chat storage ------------------------------------------------------------
+import base64
+from datetime import datetime, timezone
+from flask import Response
+
+CHAT_FOLDER = os.path.join(os.path.dirname(__file__), 'chat')
+os.makedirs(CHAT_FOLDER, exist_ok=True)
+
+def _chat_path(save):
+    return os.path.join(CHAT_FOLDER, safe_path_seg(save) + ".txt")
+
+
+def _b64(s: str) -> str:
+    return base64.b64encode(s.encode('utf-8')).decode('ascii')
+
+@app.route('/chat/<save>', methods=['GET'])
+def chat_get(save):
+    path = _chat_path(save)
+    if not os.path.exists(path):
+        return ("", 200, {'Content-Type': 'text/plain; charset=utf-8',
+                          'Cache-Control': 'no-store'})
+    with open(path, 'r', encoding='utf-8') as f:
+        body = f.read()
+    # Optional: trim file if it grows too large (manual maintenance)
+    return (body, 200, {'Content-Type': 'text/plain; charset=utf-8',
+                        'Cache-Control': 'no-store'})
+
+@app.route('/chat/<save>', methods=['POST'])
+def chat_post(save):
+    user = request.args.get('u', 'anon')
+    msg  = (request.data or b'').decode('utf-8', errors='ignore').strip()
+    if not msg:
+        return ("empty", 400)
+    if len(msg) > 300:
+        msg = msg[:300]
+
+    ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')  # real time UTC
+    line = f"{ts}|{_b64(user)}|{_b64(msg)}\n"
+
+    path = _chat_path(save)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'a', encoding='utf-8') as f:
+        f.write(line)
+
+    return ("OK", 200, {'Cache-Control': 'no-store'})
 
 
 if __name__ == '__main__':

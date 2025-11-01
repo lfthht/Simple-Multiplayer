@@ -31,6 +31,7 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="Chat.cs" />
     <Compile Include="FlagSync.cs" />
     <Compile Include="GlobalConfig.cs" />
     <Compile Include="LocalOrbitUploader.cs" />

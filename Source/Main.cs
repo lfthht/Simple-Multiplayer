@@ -217,6 +217,7 @@ namespace SimpleMultiplayer
         {
             GUILayout.BeginVertical();
             if (GUILayout.Button("Open Player Viewer")) showPresence = true;
+            if (GUILayout.Button("Open Chat")) SimpleMultiplayer.Chat.Show();
             GUILayout.Space(6);
             GUILayout.Space(6);
 
