@@ -308,49 +308,103 @@ def upload_scenario(save, module):
 
 
     elif module_safe == "ScienceArchives":
-        def extract_science_blocks(text):
-            blocks = []
-            current_block = []
-            inside_science = False
-            for line in text.strip().splitlines():
-                stripped = line.strip()
-                if stripped.startswith("Science"):
-                    if inside_science and current_block:
-                        blocks.append("\n".join(current_block))
-                        current_block = []
-                    inside_science = True
-                    current_block = [stripped]
-                elif inside_science:
-                    current_block.append(stripped)
-                    if stripped == "}":
-                        blocks.append("\n".join(current_block))
-                        current_block = []
-                        inside_science = False
-            if current_block:
-                blocks.append("\n".join(current_block))
+        # --- Helpers ---------------------------------------------------------
+        def extract_science_blocks(text: str):
+            blocks, cur, inside = [], [], False
+            for line in (text or "").strip().splitlines():
+                s = line.strip()
+                if s.startswith("Science"):
+                    if inside and cur:
+                        blocks.append("\n".join(cur))
+                        cur = []
+                    inside = True
+                    cur = [line.rstrip()]
+                elif inside:
+                    cur.append(line.rstrip())
+                    if s == "}":
+                        blocks.append("\n".join(cur))
+                        cur = []
+                        inside = False
+            if cur:
+                blocks.append("\n".join(cur))
             return blocks
 
-        new_blocks = extract_science_blocks(new_data)
-        new_ids = {block for block in new_blocks if "id =" in block}
+        def parse_block(block: str):
+            sid, sci, cap = None, None, None
+            for ln in block.splitlines():
+                s = ln.strip()
+                if s.startswith("id ="):
+                    sid = s.split("=", 1)[1].strip()
+                elif s.startswith("sci ="):
+                    try: sci = float(s.split("=", 1)[1].strip())
+                    except: pass
+                elif s.startswith("cap ="):
+                    try: cap = float(s.split("=", 1)[1].strip())
+                    except: pass
+            return sid, sci, cap
 
+        def replace_sci(block: str, new_sci: float) -> str:
+            # keep original indentation of the sci line
+            out, replaced = [], False
+            for ln in block.splitlines():
+                if not replaced and ln.strip().startswith("sci ="):
+                    indent = ln[:len(ln) - len(ln.lstrip())]
+                    out.append(f"{indent}sci = {new_sci}")
+                    replaced = True
+                else:
+                    out.append(ln)
+            # (If a malformed block lacks sci, append one before closing brace)
+            if not replaced:
+                for i in range(len(out)-1, -1, -1):
+                    if out[i].strip() == "}":
+                        out.insert(i, f"    sci = {new_sci}")
+                        break
+            return "\n".join(out)
+
+        # --- Load & merge ----------------------------------------------------
+        new_blocks = extract_science_blocks(new_data)
+        merged_map = {}  # id -> {'raw': block, 'sci': float or None, 'cap': float or None}
+
+        # start from existing file to preserve previous subjects
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
-                existing_data = f.read()
-            existing_blocks = extract_science_blocks(existing_data)
+                existing_blocks = extract_science_blocks(f.read())
+            for b in existing_blocks:
+                sid, sci, cap = parse_block(b)
+                if sid:
+                    merged_map[sid] = {'raw': b, 'sci': sci, 'cap': cap}
 
-            # avoid duplicates by checking for same "id = ..."
-            existing_ids = {block for block in existing_blocks if "id =" in block}
+        # merge in new blocks by id, clamping to cap
+        for b in new_blocks:
+            sid, sci, cap = parse_block(b)
+            if not sid:
+                continue
+            prev = merged_map.get(sid, {'raw': b, 'sci': None, 'cap': None})
 
-            merged_blocks = list(existing_blocks)
-            for block in new_blocks:
-                if block not in existing_ids:
-                    merged_blocks.append(block)
+            # pick final cap (prefer non-None; cap is fixed per subject)
+            cap_final = cap if cap is not None else prev.get('cap')
 
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(merged_blocks) + "\n")
-        else:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(new_blocks) + "\n")
+            # best known sci is the max of previous and new
+            best_sci = prev['sci'] if isinstance(prev['sci'], (int, float)) else 0.0
+            if isinstance(sci, (int, float)):
+                if sci > best_sci:
+                    best_sci = sci
+
+            # clamp to cap if available
+            if isinstance(cap_final, (int, float)):
+                best_sci = min(best_sci, cap_final)
+
+            # prefer the newer block layout when updating
+            base_block = b if isinstance(sci, (int, float)) and (prev['sci'] is None or sci >= prev['sci']) else prev['raw']
+            out_block = replace_sci(base_block, best_sci)
+
+            merged_map[sid] = {'raw': out_block, 'sci': best_sci, 'cap': cap_final}
+
+        # write back unique, merged blocks
+        with open(path, "w", encoding="utf-8") as f:
+            # stable-ish order by id
+            f.write("\n".join(merged_map[k]['raw'] for k in sorted(merged_map.keys())) + "\n")
+
                 
     return "OK", 200
 
@@ -746,4 +800,4 @@ if __name__ == '__main__':
     print(f"Serving vessels from: {UPLOAD_FOLDER_VESSELS}")
     print(f"Serving flags from: {UPLOAD_FOLDER_FLAGS}")
     print(f"Serving presence from: {PRESENCE_DIR}")
-    app.run(debug=True, port=5000)
+    app.run(host="0.0.0.0", port=5000, debug=False)
