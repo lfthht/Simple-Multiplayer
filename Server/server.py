@@ -474,6 +474,19 @@ VOTES = {}  # key: (save, techID) -> dict
 
 def _key(save, tech): return (safe_path_seg(save), safe_path_seg(tech))
 
+# at top of voting section keep existing imports and globals
+
+def _online_users():
+    now = time.time()
+    out = []
+    for user, rec in PRESENCE.items():
+        try:
+            if (now - float(rec.get("ut_epoch", 0))) < PRESENCE_TTL:
+                out.append(user)
+        except:
+            pass
+    return out
+
 @app.route('/vote/start/<save>/<tech>', methods=['POST'])
 def vote_start(save, tech):
     data = request.get_json(force=True, silent=True) or {}
@@ -481,8 +494,14 @@ def vote_start(save, tech):
     title = data.get('title', tech)
     cost  = float(data.get('cost', 0.0))
     k = _key(save, tech)
+
+    # quorum: 1 if only one online, else 2
+    online_cnt = max(0, len(_online_users()))
+    quorum = 1 if online_cnt <= 1 else 2
+
     VOTES[k] = {'title': title, 'requester': requester, 'cost': cost,
-                'votes': {}, 'opened': time.time(), 'closed': False, 'approved': None}
+                'votes': {}, 'opened': time.time(), 'closed': False,
+                'approved': None, 'quorum': quorum}
     return 'OK', 200
 
 @app.route('/vote/cast/<save>/<tech>', methods=['POST'])
@@ -496,20 +515,19 @@ def vote_cast(save, tech):
     if k not in VOTES or VOTES[k].get('closed'):
         return 'No open vote', 400
 
-    # record or overwrite this user's vote
     VOTES[k]['votes'][user] = vote
 
     yes = sum(1 for v in VOTES[k]['votes'].values() if v)
     no  = sum(1 for v in VOTES[k]['votes'].values() if not v)
     n   = yes + no
+    quorum = int(VOTES[k].get('quorum', 2))
 
-    # decide as soon as two distinct users have voted:
-    # approve if yes>no, otherwise reject on tie or more no
-    if n >= 2:
+    if n >= quorum:
         VOTES[k]['closed'] = True
         VOTES[k]['approved'] = (yes > no)
 
     return 'OK', 200
+
 
 @app.route('/vote/status/<save>/<tech>', methods=['GET'])
 def vote_status(save, tech):

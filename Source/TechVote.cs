@@ -24,6 +24,12 @@ namespace SimpleMultiplayer
         private static readonly HashSet<string> _seenOpen = new HashSet<string>(StringComparer.Ordinal);
         private static readonly Dictionary<string, PopupDialog> _voterDlgs = new Dictionary<string, PopupDialog>(StringComparer.Ordinal);
 
+        // add near other statics
+        private static readonly Dictionary<string, RDTech.State> _prevState =
+            new Dictionary<string, RDTech.State>(StringComparer.Ordinal);
+        private static readonly Dictionary<string, float> _pendingCost =
+            new Dictionary<string, float>(StringComparer.Ordinal);
+
         private void Awake()
         {
             if (_inst != null) { Destroy(this); return; }
@@ -48,12 +54,15 @@ namespace SimpleMultiplayer
             string title = tech.title;
             float cost = tech.scienceCost;
 
-            // refund and re-lock during vote
+            // remember original state and cost
+            _pendingCost[techID] = cost;
+
             var proto = rnd.GetTechState(techID);
             if (proto != null)
             {
-                rnd.AddScience(cost, TransactionReasons.None);
-                proto.state = RDTech.State.Unavailable;
+                _prevState[techID] = proto.state;               // store original state
+                rnd.AddScience(cost, TransactionReasons.None);  // temporary refund during vote
+                proto.state = RDTech.State.Unavailable;         // relock while voting
                 try { ResearchAndDevelopment.RefreshTechTreeUI(); } catch { }
             }
 
@@ -101,18 +110,22 @@ namespace SimpleMultiplayer
             // spend points
             rnd.AddScience(-cost, TransactionReasons.None);
 
-            // set researchable then finalize unlock so parts/UI update
+            // finalize unlock
             var proto = rnd.GetTechState(techID);
             if (proto != null)
             {
                 proto.state = RDTech.State.Available;
                 rnd.UnlockProtoTechNode(proto);
             }
-
             try { ResearchAndDevelopment.RefreshTechTreeUI(); } catch { }
 
-            // send only this node
+            // post only this node
             StartCoroutine(CoPostSingleTechNode(techID));
+
+            // cleanup
+            _prevState.Remove(techID);
+            _pendingCost.Remove(techID);
+
         }
 
 
@@ -244,14 +257,32 @@ namespace SimpleMultiplayer
             yield return SendJson(url, payload);
             CloseWaiting();
 
-            // restore to researchable so user can try again later
+            // restore original tech state and revert temporary refund
             var rnd = ResearchAndDevelopment.Instance;
             if (rnd != null)
             {
                 var proto = rnd.GetTechState(techID);
                 if (proto != null)
                 {
-                    proto.state = RDTech.State.Available;
+                    RDTech.State original;
+                    if (_prevState.TryGetValue(techID, out original))
+                    {
+                        proto.state = original; // exact revert
+                        _prevState.Remove(techID);
+                    }
+                    else
+                    {
+                        // fallback: keep it locked rather than accidentally unlocking
+                        proto.state = RDTech.State.Unavailable;
+                    }
+
+                    float tmpCost;
+                    if (_pendingCost.TryGetValue(techID, out tmpCost))
+                    {
+                        rnd.AddScience(-tmpCost, TransactionReasons.None); // undo the temporary refund
+                        _pendingCost.Remove(techID);
+                    }
+
                     try { ResearchAndDevelopment.RefreshTechTreeUI(); } catch { }
                 }
             }
