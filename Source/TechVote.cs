@@ -154,7 +154,12 @@ namespace SimpleMultiplayer
             while (true)
             {
                 yield return new WaitForSecondsRealtime(1f);
-                if (HighLogic.LoadedScene != GameScenes.SPACECENTER) continue;
+                // Allow Space Center, Flight (incl. map), and Tracking Station
+                if (!HighLogic.LoadedSceneIsFlight &&
+                    HighLogic.LoadedScene != GameScenes.SPACECENTER &&
+                    HighLogic.LoadedScene != GameScenes.TRACKSTATION)
+                    continue;
+
 
                 string url = GlobalConfig.ServerUrl + "/vote/open/" + GlobalConfig.sharedSaveId;
                 var www = UnityWebRequest.Get(url);
