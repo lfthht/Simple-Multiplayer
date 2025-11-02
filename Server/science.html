@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KSP Science Tracker</title>
+<style>
+  :root{--bg:#111;--card:#1b1b1b;--ink:#eaeaea;--muted:#9aa0a6;--yes:#1db954;--no:#8b8b8b;--accent:#4dabf7;--chip:#2a2a2a}
+  *{box-sizing:border-box} body{margin:0;padding:16px;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  h1{font-size:20px;margin:0 0 8px} .sub{color:var(--muted);margin-bottom:12px}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 16px}
+  input[type=search],select{background:var(--chip);border:1px solid #333;color:var(--ink);padding:8px 10px;border-radius:10px}
+  .pill{background:var(--chip);padding:4px 8px;border-radius:999px;font-size:12px;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:10px}
+  .card{background:var(--card);border:1px solid #2a2a2a;border-radius:14px;padding:12px}
+  .id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--muted);word-break:break-all}
+  .title{font-weight:600;margin:2px 0 6px} .meta{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .tag{padding:2px 6px;border-radius:6px;background:#222;border:1px solid #333;color:var(--muted);font-size:12px}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;vertical-align:-2px;margin-right:6px}
+  .yes{color:var(--yes)} .no{color:var(--no)}
+  .sticky{position:sticky;top:0;background:linear-gradient(180deg,rgba(17,17,17,1) 60%,rgba(17,17,17,0));padding-top:8px;z-index:2}
+  .grouphead{font-size:13px;color:var(--muted);margin:10px 0 6px;border-top:1px dashed #333;padding-top:8px;display:flex;justify-content:space-between}
+  a.btn{background:var(--accent);color:#021523;padding:6px 10px;border-radius:10px;font-weight:600;text-decoration:none}
+</style>
+
+<div class="sticky">
+  <h1>🧪 KSP Science Tracker</h1>
+  <div class="sub">Uses <code>ScienceDefs.cfg</code> + <code>biomelist.txt</code>. Archives from <code>/scenarios/&lt;save&gt;/ScienceArchives.txt</code>.</div>
+  <div class="toolbar">
+    <select id="granSel">
+      <option value="biome">Per Biome</option>
+      <option value="situation">Per Situation</option>
+    </select>
+    <input id="q" type="search" placeholder="Search…" />
+    <select id="bodySel"></select>
+    <select id="expSel"></select>
+    <select id="sitSel"></select>
+    <select id="statusSel">
+      <option value="">All</option>
+      <option value="todo">TODO only</option>
+      <option value="done">DONE only</option>
+    </select>
+    <span class="pill" id="counts"></span>
+    <span class="pill" id="savePill"></span>
+    <a class="btn" href="#" id="refreshBtn">Refresh</a>
+  </div>
+</div>
+<div id="groups"></div>
+
+<script>
+const bodySel   = document.getElementById('bodySel');
+const expSel    = document.getElementById('expSel');
+const sitSel    = document.getElementById('sitSel');
+const statusSel = document.getElementById('statusSel');
+const granSel   = document.getElementById('granSel');
+const q         = document.getElementById('q');
+const counts    = document.getElementById('counts');
+
+const url  = new URL(location.href);
+let SAVE   = url.searchParams.get('save') || 'default';
+let GRAN   = url.searchParams.get('gran') || 'biome';
+document.getElementById('savePill').textContent = 'save=' + SAVE;
+granSel.value = GRAN;
+
+let SUBJECTS = { situation: [], biome: [] };
+let DONE = new Set();
+
+function uniq(a){ return [...new Set(a)]; }
+
+function fillSelect(sel, items, keep) {
+  const cur = keep && items.includes(keep) ? keep : '';
+  sel.innerHTML = '<option value="">All</option>' +
+    items.map(v => `<option value="${v}">${v}</option>`).join('');
+  sel.value = cur;
+}
+
+function rebuildFilters(source, preserve=true) {
+  const keep = preserve ? { b: bodySel.value, e: expSel.value, s: sitSel.value } : {};
+  const bodies = uniq(source.map(r => r.body)).sort();
+  const exps   = uniq(source.map(r => r.exp)).sort();
+  const sits   = uniq(source.map(r => r.situation)).sort();
+  fillSelect(bodySel, bodies, keep.b);
+  fillSelect(expSel,  exps,   keep.e);
+  fillSelect(sitSel,  sits,   keep.s);
+}
+
+async function loadSubjects() {
+  const r = await fetch('/science/subjects');   // server builds from ScienceDefs.cfg + biomelist.txt
+  SUBJECTS = await r.json();                    // {situation:[...], biome:[...]}
+  rebuildFilters(SUBJECTS[GRAN], false);
+}
+
+async function loadArchives() {
+  const r = await fetch('/science/archives/' + encodeURIComponent(SAVE));
+  DONE = new Set(await r.json());               // exact subject IDs
+}
+
+function humanizeSituation(s) {
+  const map = {
+    SrfLanded:  "surface landed",
+    SrfSplashed:"splashed",
+    FlyingLow:  "flying low",
+    FlyingHigh: "flying high",
+    InSpaceLow: "in space low",
+    InSpaceHigh:"in space high",
+  };
+  return map[s] || s.replace(/([A-Z])/g, ' $1').trim().toLowerCase();
+}
+
+function titleCase(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/\b\w/g, c => c.toUpperCase()); // "EVA REPORT" -> "Eva Report"
+}
+
+function render() {
+  const src = SUBJECTS[GRAN] || [];
+  const qv = (q.value || '').toLowerCase();
+  const bf = bodySel.value, ef = expSel.value, sf = sitSel.value, tf = statusSel.value;
+
+  const groups = new Map();
+  let shown=0, doneCt=0, todoCt=0;
+
+  for (const r of src) {
+    if (bf && r.body !== bf) continue;
+    if (ef && r.exp  !== ef) continue;
+    if (sf && r.situation !== sf) continue;
+
+    const hay = (r.title+' '+r.exp+' '+r.body+' '+r.situation+' '+(r.biome||'')).toLowerCase();
+    if (qv && !hay.includes(qv)) continue;
+
+    let isDone=false, samples=0;
+    if (GRAN === 'biome') {
+      isDone = DONE.has(r.id);
+      samples = isDone ? 1 : 0;
+    } else {
+      const pref = r.id_prefix;
+      const seen = new Set();
+      for (const id of DONE) if (id.startsWith(pref)) { isDone = true; seen.add(id.slice(pref.length)); }
+      samples = seen.size;
+    }
+
+    if (tf === 'todo' && isDone) continue;
+    if (tf === 'done' && !isDone) continue;
+
+    shown++; if (isDone) doneCt++; else todoCt++;
+    if (!groups.has(r.body)) groups.set(r.body, []);
+    groups.get(r.body).push({ ...r, done:isDone, samples });
+  }
+
+  counts.textContent = `Showing ${shown} • Done ${doneCt} • Todo ${todoCt}`;
+
+  const wrap = document.getElementById('groups');
+  wrap.innerHTML = '';
+  const bodiesSorted = [...groups.keys()].sort((a,b)=>a.localeCompare(b));
+
+  for (const body of bodiesSorted) {
+    const items = groups.get(body);
+    const doneInBody = items.filter(x => x.done).length;
+
+    const div = document.createElement('div'); div.className = 'group';
+    const head = document.createElement('div'); head.className = 'grouphead';
+    head.innerHTML = `<span>🌍 ${body}</span><span>${items.length} total • ${doneInBody} done • ${items.length - doneInBody} todo</span>`;
+    div.appendChild(head);
+
+    const grid = document.createElement('div'); grid.className = 'grid';
+    for (const it of items) {
+      const card = document.createElement('div'); 
+      card.className = 'card';
+
+      // Headline: "<Title> - <Body> <human situation> <biome?>"
+      const head = `${titleCase(it.title)} - ${it.body} ${humanizeSituation(it.situation)}${
+        (GRAN === 'biome' && it.biome) ? ' ' + it.biome.toLowerCase() : ''
+      }`.trim();
+
+      card.innerHTML = `
+        <div class="title">${head}</div>
+        <div class="meta">
+          <span class="${it.done ? 'yes' : 'no'}">
+            <span class="dot" style="background:${it.done ? 'var(--yes)' : 'var(--no)'}"></span>${it.done ? 'DONE' : 'TODO'}
+          </span>
+          ${it.done ? `<span class="tag">samples: ${it.samples}</span>` : ''}
+        </div>`;
+
+      // Optional: keep the raw subject in a tooltip only
+      card.title = (GRAN === 'biome') ? it.id : it.id_prefix + '*';
+      grid.appendChild(card);
+    }
+    div.appendChild(grid);
+    wrap.appendChild(div);
+  }
+}
+
+granSel.addEventListener('change', e => {
+  const val = e.target.value;
+  if (val !== GRAN) {
+    GRAN = val;
+    const u = new URL(location.href); u.searchParams.set('gran', GRAN); history.replaceState(null,'',u);
+    rebuildFilters(SUBJECTS[GRAN], true);
+    render();
+  }
+});
+[q, bodySel, expSel, sitSel, statusSel].forEach(el => el.addEventListener('input', render));
+document.getElementById('refreshBtn').addEventListener('click', e => { e.preventDefault(); loadArchives().then(render); });
+
+(async function init(){
+  await loadSubjects();
+  await loadArchives();
+  render();
+})();
+</script>
+
+</html>
