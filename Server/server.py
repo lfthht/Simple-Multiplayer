@@ -857,162 +857,51 @@ def chat_post(save):
         f.write(line)
 
     return ("OK", 200, {'Cache-Control': 'no-store'})
-# Serve the static page if you want:
+
+
+# --- science: subjects + archives ---
+import os, json
+from flask import jsonify, send_from_directory
+
+# Serve the static page
 @app.route('/science.html')
 def serve_science_html():
     return send_from_directory(os.path.dirname(__file__), 'science.html')
 
-# JSON list of archived subject IDs for a save
+# Prebuilt subjects JSON (fast; no CFG parsing at runtime)
+@app.route('/science/subjects')
+def science_subjects_cached():
+    root = os.path.dirname(__file__)
+    with open(os.path.join(root, 'science_subjects.json'), 'r', encoding='utf-8') as f:
+        return jsonify(json.load(f))
+
+# DONE list from a save's archives (uses your existing folder layout)
 @app.route('/science/archives/<save>')
 def science_archives_json(save):
-    save_safe = safe_path_seg(save)
-    folder = os.path.join(UPLOAD_FOLDER_SCENARIOS, save_safe)
-    path = os.path.join(folder, "ScienceArchives.txt")
+    # if you already have safe_path_seg/UPLOAD_FOLDER_SCENARIOS, use those:
+    try:
+        save_safe = safe_path_seg(save)
+        base = UPLOAD_FOLDER_SCENARIOS
+    except NameError:
+        # fallback if not defined
+        save_safe = save.replace('/', '_').replace('..', '')
+        base = os.path.join(os.path.dirname(__file__), 'scenarios')
 
+    path = os.path.join(base, save_safe, 'ScienceArchives.txt')
     ids = set()
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            inside = False
-            sid = None
+        inside = False; cur_id = None
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
             for raw in f:
                 s = raw.strip()
-                if s.startswith("Science"):
-                    inside = True
-                    sid = None
-                elif inside and s.startswith("id ="):
-                    sid = s.split("=", 1)[1].strip()
-                elif inside and s == "}":
-                    if sid:
-                        ids.add(sid)
+                if s.startswith('Science'):
+                    inside = True; cur_id = None
+                elif inside and s.startswith('id ='):
+                    cur_id = s.split('=',1)[1].strip()
+                elif inside and s == '}':
+                    if cur_id: ids.add(cur_id)
                     inside = False
-
     return jsonify(sorted(ids))
-
-
-# --- Subjects JSON (derived from ScienceDefs.cfg + biomelist.txt) ---
-import re, os
-from flask import jsonify
-
-def _read(path):
-    return open(path, 'r', encoding='utf-8', errors='ignore').read()
-
-def _parse_blocks(text, head):
-    out=[]; i=0; n=len(text)
-    while True:
-        m=re.search(r'\b'+re.escape(head)+r'\s*\{', text[i:])
-        if not m: break
-        start=i+m.start(); j=text.find('{', start)
-        if j<0: break
-        b=1; k=j+1
-        while k<n and b>0:
-            if text[k]=='{': b+=1
-            elif text[k]=='}': b-=1
-            k+=1
-        out.append(text[j+1:k-1]); i=k
-    return out
-
-def _kv(inner):
-    d={}
-    for ln in inner.splitlines():
-        s=ln.strip()
-        if not s or s.startswith('//'): continue
-        m=re.match(r'([A-Za-z0-9_]+)\s*=\s*(.*)', s)
-        if m: d[m.group(1)] = m.group(2)
-    return d
-
-def _resolve_title(raw, exp_id):
-    if not raw: return exp_id
-    m = re.search(r'//\s*#autoLOC_\d+\s*=\s*(.+)$', raw.strip())
-    if m: return m.group(1).strip()
-    if raw.strip().startswith('#autoLOC_'):
-        return re.sub(r'(?<!^)([A-Z])', r' \1', exp_id).title()
-    return re.sub(r'^#autoLOC_\d+\s*//\s*', '', raw.strip())
-
-def _parse_biomes(txt):
-    out={}; lines=[l.rstrip() for l in txt.splitlines()]; i=0; n=len(lines)
-    while i<n:
-        line=lines[i].strip(); i+=1
-        if not line: continue
-        if "(" in line or line.endswith(","): continue
-        body=line; lst=[]
-        while i<n:
-            s=lines[i].strip(); i+=1
-            if not s: continue
-            if s.startswith("("): s=s[1:]
-            end=False
-            if s.endswith(")"): s=s[:-1]; end=True
-            for p in [x.strip() for x in s.split(",")]:
-                if p and p!=")": lst.append(p)
-            if end: break
-        out[body]=[x for x in lst if x and x!=")"]
-    return out
-
-@app.route('/science/subjects')
-def science_subjects():
-    root = os.path.dirname(__file__)
-    cfg  = _read(os.path.join(root, 'ScienceDefs.cfg'))
-    blst = _read(os.path.join(root, 'biomelist.txt'))
-
-    SIT = {"SrfLanded":1,"SrfSplashed":2,"FlyingLow":4,"FlyingHigh":8,"InSpaceLow":16,"InSpaceHigh":32}
-    BODIES = [
-        {"name":"Sun","has_surface":False,"has_atmo":False,"has_ocean":False},
-        {"name":"Moho","has_surface":True,"has_atmo":False,"has_ocean":False},
-        {"name":"Eve","has_surface":True,"has_atmo":True,"has_ocean":False},
-        {"name":"Gilly","has_surface":True,"has_atmo":False,"has_ocean":False},
-        {"name":"Kerbin","has_surface":True,"has_atmo":True,"has_ocean":True},
-        {"name":"Mun","has_surface":True,"has_atmo":False,"has_ocean":False},
-        {"name":"Minmus","has_surface":True,"has_atmo":False,"has_ocean":False},
-        {"name":"Duna","has_surface":True,"has_atmo":True,"has_ocean":False},
-        {"name":"Ike","has_surface":True,"has_atmo":False,"has_ocean":False},
-        {"name":"Dres","has_surface":True,"has_atmo":False,"has_ocean":False},
-        {"name":"Jool","has_surface":False,"has_atmo":True,"has_ocean":False},
-        {"name":"Laythe","has_surface":True,"has_atmo":True,"has_ocean":True},
-        {"name":"Vall","has_surface":True,"has_atmo":False,"has_ocean":False},
-        {"name":"Tylo","has_surface":True,"has_atmo":False,"has_ocean":False},
-        {"name":"Bop","has_surface":True,"has_atmo":False,"has_ocean":False},
-        {"name":"Pol","has_surface":True,"has_atmo":False,"has_ocean":False},
-        {"name":"Eeloo","has_surface":True,"has_atmo":False,"has_ocean":False},
-    ]
-    def bit_on(mask, key):
-        try: return (int(mask) & SIT[key]) != 0
-        except: return False
-    def tok(biome):
-        return re.sub(r'[^A-Za-z0-9]+',' ', biome).title().replace(' ','')
-    exps = [_kv(b) for b in _parse_blocks(cfg, "EXPERIMENT_DEFINITION")]
-    biomes = _parse_biomes(blst)
-
-    situation, biome_out = [], []
-    for e in exps:
-        exp=e.get("id","")
-        title=_resolve_title(e.get("title",""), exp)
-        sm=e.get("situationMask","0"); bm=e.get("biomeMask","0")
-        req_atmo=(e.get("requireAtmosphere","False").lower()=="true")
-        req_no=(e.get("requireNoAtmosphere","False").lower()=="true")
-        for bd in BODIES:
-            if req_atmo and not bd["has_atmo"]: continue
-            if req_no   and     bd["has_atmo"]: continue
-            body=bd["name"]; body_biomes=biomes.get(body, [])
-            for sit in SIT:
-                if not bit_on(sm, sit): continue
-                if sit=="SrfLanded" and not bd["has_surface"]: continue
-                if sit=="SrfSplashed" and not bd["has_ocean"]: continue
-                if sit in ("FlyingLow","FlyingHigh") and not bd["has_atmo"]: continue
-                situation.append({
-                    "id_prefix": f"{exp}@{body}{sit}",
-                    "exp": exp, "title": title, "body": body,
-                    "situation": sit, "biome_relevant": bit_on(bm, sit)
-                })
-                if bit_on(bm, sit) and body_biomes:
-                    for biome in body_biomes:
-                        biome_out.append({
-                            "id": f"{exp}@{body}{sit}{tok(biome)}",
-                            "exp": exp, "title": title, "body": body,
-                            "situation": sit, "biome": biome
-                        })
-    situation.sort(key=lambda r:(r["body"],r["exp"],r["situation"]))
-    biome_out.sort(key=lambda r:(r["body"],r["exp"],r["situation"],r["biome"]))
-    return jsonify({"situation": situation, "biome": biome_out})
-
 
 if __name__ == '__main__':
     print(f"Serving vessels from: {UPLOAD_FOLDER_VESSELS}")
