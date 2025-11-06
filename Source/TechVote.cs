@@ -40,6 +40,7 @@ namespace SimpleMultiplayer
         // Call from ScenarioSync when user clicks “Research”
         public static void StartLocalVote(RDTech tech)
         {
+            if (!SessionGate.Ready) return;
             if (tech == null) return;
             if (_inst == null) new GameObject("TechVote").AddComponent<TechVote>();
             _inst.StartCoroutine(_inst.CoStartLocalVote(tech));
@@ -167,11 +168,10 @@ namespace SimpleMultiplayer
             while (true)
             {
                 yield return new WaitForSecondsRealtime(1f);
-                // Allow Space Center, Flight (incl. map), and Tracking Station
+                if (!SessionGate.Ready) continue;
                 if (!HighLogic.LoadedSceneIsFlight &&
                     HighLogic.LoadedScene != GameScenes.SPACECENTER &&
-                    HighLogic.LoadedScene != GameScenes.TRACKSTATION)
-                    continue;
+                    HighLogic.LoadedScene != GameScenes.TRACKSTATION) continue;
 
 
                 string url = GlobalConfig.ServerUrl + "/vote/open/" + GlobalConfig.sharedSaveId;

@@ -204,20 +204,33 @@ namespace SimpleMultiplayer
         // -------- Camera-synced update (no warp ghosting) --------
         private void OnCamPreCull(Camera cam)
         {
-            if (!_running) return;
-            var mapCam = PlanetariumCamera.Camera;
-            if (cam != mapCam || mapCam == null) return;
+            // run only when a save is active and we are in a relevant scene
+            if (!SessionGate.Ready) return;
+            if (!(HighLogic.LoadedScene == GameScenes.TRACKSTATION ||
+                  (HighLogic.LoadedScene == GameScenes.FLIGHT && MapView.MapIsEnabled)))
+                return;
 
-            foreach (var kv in _markers) kv.Value.Tick(mapCam);
+            // PlanetariumCamera.Camera can throw early in scene init; guard it
+            Camera mapCam = null;
+            try { mapCam = PlanetariumCamera.Camera; } catch { return; }
+            if (mapCam == null || cam != mapCam) return;
+
+            foreach (var kv in _markers)
+                kv.Value.Tick(mapCam);
         }
 
         // -------- Server polling --------
         private IEnumerator PollLoop()
         {
-            var wait = new WaitForSecondsRealtime(PollSeconds);
+            var wait = new WaitForSecondsRealtime(0.5f);
             while (_running)
             {
-                yield return DownloadOnce();
+                if (SessionGate.Ready &&
+                    (HighLogic.LoadedScene == GameScenes.TRACKSTATION
+                     || (HighLogic.LoadedScene == GameScenes.FLIGHT && MapView.MapIsEnabled)))
+                {
+                    yield return DownloadOnce();
+                }
                 yield return wait;
             }
         }
@@ -304,6 +317,7 @@ namespace SimpleMultiplayer
 
         private void OnGUI()
         {
+            if (!SessionGate.Ready) return;
             if (!(HighLogic.LoadedScene == GameScenes.TRACKSTATION || (HighLogic.LoadedScene == GameScenes.FLIGHT && MapView.MapIsEnabled)))
                 return;
 

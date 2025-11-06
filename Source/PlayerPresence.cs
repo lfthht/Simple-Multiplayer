@@ -46,11 +46,11 @@ namespace SimpleMultiplayer
         {
             while (true)
             {
-                yield return Post();
-                yield return Fetch();
+                if (SessionGate.Ready) { yield return Post(); yield return Fetch(); }
                 yield return new WaitForSeconds(5f);
             }
         }
+
 
         IEnumerator Post()
         {

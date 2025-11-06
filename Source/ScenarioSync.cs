@@ -55,6 +55,7 @@ namespace SimpleMultiplayer
 
         private void OnLevelReady(GameScenes scene)
         {
+            if (!SessionGate.Ready) return;
             if (HighLogic.CurrentGame == null) return;
 
             if (scene == GameScenes.SPACECENTER)
@@ -94,6 +95,7 @@ namespace SimpleMultiplayer
 
         private void OnGameStateSaved(Game game)
         {
+            if (!SessionGate.Ready) return;
             // Only act at KSC, and only with a valid game. Prevent overlaps.
             if (HighLogic.LoadedScene != GameScenes.SPACECENTER) return;
             if (game == null || HighLogic.CurrentGame == null) return;
@@ -114,12 +116,10 @@ namespace SimpleMultiplayer
         {
             while (true)
             {
-                yield return new WaitForSecondsRealtime(5f); // was WaitForSeconds(5f)
+                yield return new WaitForSecondsRealtime(5f);
+                if (!SessionGate.Ready) continue;
                 if (HighLogic.LoadedScene == GameScenes.SPACECENTER)
-                {
-                    Debug.Log("[ScenarioSync] Periodic sync from Space Center");
                     StartCoroutine(UploadScenarioParts());
-                }
             }
         }
 
@@ -127,12 +127,10 @@ namespace SimpleMultiplayer
         {
             while (true)
             {
-                yield return new WaitForSecondsRealtime(5f); // was WaitForSeconds(5f)
+                yield return new WaitForSecondsRealtime(5f);
+                if (!SessionGate.Ready) continue;
                 if (HighLogic.LoadedScene == GameScenes.SPACECENTER)
-                {
-                    Debug.Log("[ScenarioSync] Periodic download from Space Center");
                     StartCoroutine(DownloadAndInjectMergedScenario());
-                }
             }
         }
 
@@ -309,7 +307,7 @@ namespace SimpleMultiplayer
                 foreach (ConfigNode tech in techTree.GetNodes("Tech"))
                     merged.AddNode(tech);
             }
-            bool archiveAdded = false;   
+            bool archiveAdded = false;
             // ScienceArchives (guard + dedupe)
             ConfigNode scienceArchive = null;
             if (!string.IsNullOrWhiteSpace(content[2]))

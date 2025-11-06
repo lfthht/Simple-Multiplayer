@@ -109,6 +109,7 @@ namespace SimpleMultiplayer
 
         private void Update()
         {
+            if (!SessionGate.Ready) return;
             if (Input.GetKeyDown(KeyCode.F8))
             {
                 _show = !_show;
@@ -139,6 +140,7 @@ namespace SimpleMultiplayer
 
         private void OnGUI()
         {
+            if (!SessionGate.Ready) return;
             if (!_show) return;
 
             _rect = GUILayout.Window(

@@ -1,7 +1,5 @@
-﻿
-// Copyright (c) 2025 Julius Brockelmann
-// SPDX-License-Identifier: MIT
-// Unity 2019.4.18f1, KSP 1.12, C# 7.3
+﻿// LocalOrbitUploader.cs — gated by SessionGate.Ready, singleton, Flight only.
+// Unity 2019.4, KSP 1.12, C# 7.3
 
 using System;
 using System.Collections;
@@ -17,15 +15,31 @@ namespace SimpleMultiplayer
     {
         private const float UploadIntervalSeconds = 1f;
 
-        private string _postUrl;    // e.g. http://localhost:5000/orbits/default
+        private static bool s_alive;      // singleton guard
+        private string _postUrl;          // e.g. http://host/orbits/<saveId>
         private bool _running;
 
         private void Start()
         {
-            DontDestroyOnLoad(gameObject);
+            // one instance per session
+            if (s_alive) { Destroy(this); return; }
+            s_alive = true;
 
-            var saveId = Uri.EscapeDataString(GlobalConfig.sharedSaveId ?? "default");
-            _postUrl = $"{GlobalConfig.ServerUrl}/orbits/{saveId}";
+            // only run after new/load from main menu
+            if (!SessionGate.Ready) { enabled = false; return; }
+
+            // ensure config present
+            try { GlobalConfig.LoadConfig(); } catch { }
+
+            var baseUrl = (GlobalConfig.ServerUrl ?? "").TrimEnd('/');
+            var saveId = GlobalConfig.sharedSaveId ?? "";
+            if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(saveId))
+            {
+                Debug.LogWarning("[LocalOrbitUploader] missing ServerUrl/sharedSaveId; disabled");
+                enabled = false; return;
+            }
+
+            _postUrl = baseUrl + "/orbits/" + Uri.EscapeDataString(saveId);
 
             _running = true;
             StartCoroutine(UploadLoop());
@@ -38,63 +52,50 @@ namespace SimpleMultiplayer
         {
             _running = false;
             GameEvents.onGameSceneLoadRequested.Remove(OnSceneChange);
+            s_alive = false;
         }
 
-        private void OnSceneChange(GameScenes _) => _running = false;
+        private void OnSceneChange(GameScenes _)
+        {
+            _running = false; // stop loop on any scene switch
+        }
 
         private IEnumerator UploadLoop()
         {
             var wait = new WaitForSecondsRealtime(UploadIntervalSeconds);
             while (_running)
             {
-                yield return UploadOnce();
+                if (SessionGate.Ready && HighLogic.LoadedScene == GameScenes.FLIGHT)
+                    yield return UploadOnce();
                 yield return wait;
             }
         }
 
         private IEnumerator UploadOnce()
         {
+            // basic guards
             var v = FlightGlobals.ActiveVessel;
             if (v == null) yield break;
-
             var o = v.orbit;
             if (o == null || o.referenceBody == null) yield break;
 
-            // Build CSV that matches server.py + RemoteOrbitSync.cs
-            // user,vessel,body,epochUT,sma,ecc,inc_deg,lan_deg,argp_deg,mna_rad,colorHex,updatedUT
             double nowUT = Planetarium.GetUniversalTime();
             var inv = CultureInfo.InvariantCulture;
 
+            // CSV: user,vessel,body,epochUT,sma,ecc,inc_deg,lan_deg,argp_deg,mna_rad,colorHex,updatedUT
             string user = (GlobalConfig.userName ?? "Player").Replace(',', ' ').Trim();
             string vessel = (v.vesselName ?? "Vessel").Replace(',', ' ').Trim();
             string body = (o.referenceBody.bodyName ?? "Unknown").Replace(',', ' ').Trim();
 
             double epochUT = nowUT;
-            double sma = o.semiMajorAxis;           // meters
+            double sma = o.semiMajorAxis;
             double ecc = o.eccentricity;
-            double incDeg = o.inclination;             // degrees
-            double lanDeg = o.LAN;                     // degrees
-            double argpDeg = o.argumentOfPeriapsis;     // degrees
-            double mnaRad = o.getMeanAnomalyAtUT(nowUT); // RADIANS (viewer converts to deg)
+            double incDeg = o.inclination;
+            double lanDeg = o.LAN;
+            double argpDeg = o.argumentOfPeriapsis;
+            double mnaRad = o.getMeanAnomalyAtUT(nowUT);
 
-            // Prefer GlobalConfig.userColorHex (accepts #RRGGBB or #RRGGBBAA), fallback to hash
-            string colorHex;
-            {
-                var raw = (GlobalConfig.userColorHex ?? "").Trim();
-                if (!string.IsNullOrEmpty(raw))
-                {
-                    if (raw[0] != '#') raw = "#" + raw;
-                    if (ColorUtility.TryParseHtmlString(raw, out _))
-                        colorHex = raw;
-                    else
-                        colorHex = "#" + ColorUtility.ToHtmlStringRGB(HashColor(user));
-                }
-                else
-                {
-                    colorHex = "#" + ColorUtility.ToHtmlStringRGB(HashColor(user));
-                }
-            }
-
+            string colorHex = ResolveUserColor(user);
 
             double updatedUT = nowUT;
 
@@ -112,24 +113,32 @@ namespace SimpleMultiplayer
               .Append(colorHex).Append(',')
               .Append(updatedUT.ToString(inv));
 
-            string line = sb.ToString();
-
             var req = new UnityWebRequest(_postUrl, "POST");
-            var bodyBytes = Encoding.UTF8.GetBytes(line + "\n");
+            var bodyBytes = Encoding.UTF8.GetBytes(sb.ToString() + "\n");
             req.uploadHandler = new UploadHandlerRaw(bodyBytes);
             req.downloadHandler = new DownloadHandlerBuffer();
             req.SetRequestHeader("Content-Type", "text/plain; charset=utf-8");
 
             yield return req.SendWebRequest();
 
-            // Unity 2019.4 API (avoid .result)
             if (req.isNetworkError || req.isHttpError)
-            {
                 Debug.LogWarning($"[LocalOrbitUploader] POST failed: {req.responseCode} {req.error}");
-            }
-            // else: OK
 
             req.Dispose();
+        }
+
+        private static string ResolveUserColor(string user)
+        {
+            var raw = (GlobalConfig.userColorHex ?? "").Trim();
+            if (!string.IsNullOrEmpty(raw))
+            {
+                if (raw[0] != '#') raw = "#" + raw;
+                if (ColorUtility.TryParseHtmlString(raw, out _))
+                    return raw;
+            }
+            // fallback to hash color
+            var c = HashColor(user);
+            return "#" + ColorUtility.ToHtmlStringRGB(c);
         }
 
         // Same hash as viewer (RemoteOrbitSync) so colors line up
