@@ -6,3 +6,5 @@
 *.vsidx
 Source/obj/Debug/.NETFramework,Version=v4.7.2.AssemblyAttributes.cs
 Source/.vs/SimpleMultiplayer/v17/.suo
+/Source/.vs
+/Server/__pycache__
