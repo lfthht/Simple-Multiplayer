@@ -13,7 +13,7 @@ using static GameEvents;
 
 namespace SimpleMultiplayer
 {
-    [KSPAddon(KSPAddon.Startup.MainMenu, true)]
+    [KSPAddon(KSPAddon.Startup.EveryScene, true)]
     public sealed class PlayerPresence : MonoBehaviour
     {
         public struct Rec { public string user, scene, color; public bool online; public double utEpoch; public double kspUt; }
@@ -98,7 +98,7 @@ namespace SimpleMultiplayer
                         else if (k == "scene") scene = v;
                         else if (k == "color") color = NormalizeHex(v);
                         else if (k == "online") online = (v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase));
-                        else if (k == "ut") double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out utEpoch);   // server’s epoch
+                        else if (k == "ut" || k == "ut_epoch") double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out utEpoch);   // server’s epoch
                         else if (k == "ksp_ut") double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out kspUt); // new field
                     }
                     // when adding:

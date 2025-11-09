@@ -40,7 +40,6 @@ namespace SimpleMultiplayer
         // Call from ScenarioSync when user clicks “Research”
         public static void StartLocalVote(RDTech tech)
         {
-            if (!SessionGate.Ready) return;
             if (tech == null) return;
             if (_inst == null) new GameObject("TechVote").AddComponent<TechVote>();
             _inst.StartCoroutine(_inst.CoStartLocalVote(tech));
@@ -168,10 +167,13 @@ namespace SimpleMultiplayer
             while (true)
             {
                 yield return new WaitForSecondsRealtime(1f);
-                if (!SessionGate.Ready) continue;
+                // Allow Space Center, Flight (incl. map), and Tracking Station
                 if (!HighLogic.LoadedSceneIsFlight &&
                     HighLogic.LoadedScene != GameScenes.SPACECENTER &&
-                    HighLogic.LoadedScene != GameScenes.TRACKSTATION) continue;
+                    HighLogic.LoadedScene != GameScenes.EDITOR &&
+                    HighLogic.LoadedScene != GameScenes.FLIGHT &&
+                    HighLogic.LoadedScene != GameScenes.TRACKSTATION)
+                    continue;
 
 
                 string url = GlobalConfig.ServerUrl + "/vote/open/" + GlobalConfig.sharedSaveId;
@@ -249,45 +251,6 @@ namespace SimpleMultiplayer
             yield return SendJson(url, payload);
         }
 
-        // initiator cancel
-        private IEnumerator CoCancelVote(string techID)
-        {
-            string url = GlobalConfig.ServerUrl + "/vote/cancel/" + GlobalConfig.sharedSaveId + "/" + techID;
-            var payload = "{\"user\":\"" + SafeUser() + "\"}";
-            yield return SendJson(url, payload);
-            CloseWaiting();
-
-            // restore original tech state and revert temporary refund
-            var rnd = ResearchAndDevelopment.Instance;
-            if (rnd != null)
-            {
-                var proto = rnd.GetTechState(techID);
-                if (proto != null)
-                {
-                    RDTech.State original;
-                    if (_prevState.TryGetValue(techID, out original))
-                    {
-                        proto.state = original; // exact revert
-                        _prevState.Remove(techID);
-                    }
-                    else
-                    {
-                        // fallback: keep it locked rather than accidentally unlocking
-                        proto.state = RDTech.State.Unavailable;
-                    }
-
-                    float tmpCost;
-                    if (_pendingCost.TryGetValue(techID, out tmpCost))
-                    {
-                        rnd.AddScience(-tmpCost, TransactionReasons.None); // undo the temporary refund
-                        _pendingCost.Remove(techID);
-                    }
-
-                    try { ResearchAndDevelopment.RefreshTechTreeUI(); } catch { }
-                }
-            }
-        }
-
         private static IEnumerator SendJson(string url, string json)
         {
             var req = new UnityWebRequest(url, "POST");
@@ -329,7 +292,6 @@ namespace SimpleMultiplayer
                 new DialogGUIBase[]
                 {
                     new DialogGUILabel("Please wait…"),
-                    new DialogGUIButton("Cancel", () => _inst.StartCoroutine(_inst.CoCancelVote(techID)), true),
                 }
             );
             _waitDlg = PopupDialog.SpawnPopupDialog(dlg, false, HighLogic.UISkin);

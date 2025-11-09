@@ -55,8 +55,16 @@ namespace SimpleMultiplayer
 
         private void OnLevelReady(GameScenes scene)
         {
-            if (!SessionGate.Ready) return;
-            if (HighLogic.CurrentGame == null) return;
+            // Defer one frame to avoid racing SessionGate.Ready and scene init
+            StartCoroutine(DeferredInit(scene));
+        }
+
+        private IEnumerator DeferredInit(GameScenes scene)
+        {
+            yield return null; // allow SessionGate.Ready and R&D to initialize
+
+            if (!SessionGate.Ready) yield break;
+            if (HighLogic.CurrentGame == null) yield break;
 
             if (scene == GameScenes.SPACECENTER)
             {

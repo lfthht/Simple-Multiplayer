@@ -104,5 +104,8 @@
       <HintPath>..\..\..\Kerbal Space Program_03\KSP_x64_Data\Managed\UnityEngine.UnityWebRequestWWWModule.dll</HintPath>
     </Reference>
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="server.py" />
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
