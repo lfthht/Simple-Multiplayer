@@ -40,7 +40,7 @@ namespace SimpleMultiplayer
             public static float DotPxMin = 0.1f;
             public static float DotPxMax = 100f;
 
-            public static int Segments = 180;
+            public static int Segments = 360;
         }
 
         // -------- Menu (same style as Main.cs) --------
