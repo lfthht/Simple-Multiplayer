@@ -63,7 +63,8 @@ namespace SimpleMultiplayer
                 _prevState[techID] = proto.state;               // store original state
                 rnd.AddScience(cost, TransactionReasons.None);  // temporary refund during vote
                 proto.state = RDTech.State.Unavailable;         // relock while voting
-                try { ResearchAndDevelopment.RefreshTechTreeUI(); } catch { }
+                rnd.SetTechState(techID, proto);                // persist the change through RD
+                // no eager UI refresh
             }
 
             ShowWaiting(techID, title);
@@ -83,7 +84,9 @@ namespace SimpleMultiplayer
                 string statusUrl = GlobalConfig.ServerUrl + "/vote/status/" + GlobalConfig.sharedSaveId + "/" + techID;
                 var www = UnityWebRequest.Get(statusUrl);
                 yield return www.SendWebRequest();
+#pragma warning disable CS0618
                 if (www.isNetworkError || www.isHttpError) continue;
+#pragma warning restore CS0618
 
                 string json = www.downloadHandler.text ?? string.Empty;
                 if (string.IsNullOrEmpty(json)) { CloseWaiting(); yield break; }
@@ -96,8 +99,32 @@ namespace SimpleMultiplayer
                 CloseWaiting();
 
                 if (approved)
+                {
                     CommitUnlockAndPost(techID, cost);
+                }
+                else
+                {
+                    // NO: revert to Unavailable, persist, undo refund, then deferred UI refresh
+                    var rnd2 = ResearchAndDevelopment.Instance;
+                    if (rnd2 != null)
+                    {
+                        var p2 = rnd2.GetTechState(techID);
+                        if (p2 != null)
+                        {
+                            p2.state = RDTech.State.Unavailable;
+                            rnd2.SetTechState(techID, p2);
+                        }
 
+                        float tmpCost;
+                        if (_pendingCost.TryGetValue(techID, out tmpCost) && tmpCost != 0f)
+                            rnd2.AddScience(-tmpCost, TransactionReasons.None);
+                    }
+
+                    _prevState.Remove(techID);
+                    _pendingCost.Remove(techID);
+
+                    StartCoroutine(CoRDRefreshNextFrame()); // two-frame stable refresh
+                }
                 break;
             }
         }
@@ -115,9 +142,9 @@ namespace SimpleMultiplayer
             if (proto != null)
             {
                 proto.state = RDTech.State.Available;
-                rnd.UnlockProtoTechNode(proto);
+                rnd.SetTechState(techID, proto);   // persist state via RD
+                rnd.UnlockProtoTechNode(proto);    // updates UI
             }
-            try { ResearchAndDevelopment.RefreshTechTreeUI(); } catch { }
 
             // post only this node
             StartCoroutine(CoPostSingleTechNode(techID));
@@ -125,10 +152,7 @@ namespace SimpleMultiplayer
             // cleanup
             _prevState.Remove(techID);
             _pendingCost.Remove(techID);
-
         }
-
-
 
         private IEnumerator CoPostSingleTechNode(string techID)
         {
@@ -175,11 +199,12 @@ namespace SimpleMultiplayer
                     HighLogic.LoadedScene != GameScenes.TRACKSTATION)
                     continue;
 
-
                 string url = GlobalConfig.ServerUrl + "/vote/open/" + GlobalConfig.sharedSaveId;
                 var www = UnityWebRequest.Get(url);
                 yield return www.SendWebRequest();
+#pragma warning disable CS0618
                 if (www.isNetworkError || www.isHttpError) continue;
+#pragma warning restore CS0618
 
                 var me = SafeUser();
 
@@ -242,6 +267,14 @@ namespace SimpleMultiplayer
                 }
             );
             return PopupDialog.SpawnPopupDialog(dialog, false, HighLogic.UISkin);
+        }
+
+        private IEnumerator CoRDRefreshNextFrame()
+        {
+            // two frames avoids RD layout race when reverting to Unavailable
+            yield return null;
+            yield return null;
+            try { ResearchAndDevelopment.RefreshTechTreeUI(); } catch { }
         }
 
         private IEnumerator CoCastVote(string techID, bool yes)

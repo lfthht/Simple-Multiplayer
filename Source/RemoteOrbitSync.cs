@@ -1,5 +1,4 @@
-﻿
-// Copyright (c) 2025 Julius Brockelmann
+﻿// Copyright (c) 2025 Julius Brockelmann
 // SPDX-License-Identifier: MIT
 // Unity 2019.4.18f1, KSP 1.12, C# 7.3
 
@@ -28,7 +27,6 @@ namespace SimpleMultiplayer
         private int _scaledLayer;
         private GUIStyle _nameStyle;
 
-
         // ---- Visuals (same semantics as your working build) ----
         private static class Visual
         {
@@ -41,7 +39,6 @@ namespace SimpleMultiplayer
             public static float OrbitPxMax = 100f;
             public static float DotPxMin = 0.1f;
             public static float DotPxMax = 100f;
-
 
             public static int Segments = 180;
         }
@@ -98,9 +95,8 @@ namespace SimpleMultiplayer
             _uiDotMinWorldStr = Visual.DotPxMin.ToString(CultureInfo.InvariantCulture);
             _uiDotMaxWorldStr = Visual.DotPxMax.ToString(CultureInfo.InvariantCulture);
 
-            
-
             _running = true;
+            SyncVisibility();              // ensure hidden unless Map/TS
             StartCoroutine(PollLoop());
             GameEvents.onGameSceneLoadRequested.Add(OnSceneChange);
         }
@@ -154,7 +150,7 @@ namespace SimpleMultiplayer
             _toolbarButton = null;
         }
 
-        private void OnSceneChange(GameScenes _) => _running = false;
+        private void OnSceneChange(GameScenes _) { _running = false; SyncVisibility(); }
 
         // -------- Toolbar (same pattern as Main.cs) --------
         private void AddToolbarButton()
@@ -201,9 +197,28 @@ namespace SimpleMultiplayer
             return t;
         }
 
+        // ---- Visibility helpers ----
+        private static bool InVisibleContext()
+        {
+            return SessionGate.Ready &&
+                   (HighLogic.LoadedScene == GameScenes.TRACKSTATION ||
+                    (HighLogic.LoadedScene == GameScenes.FLIGHT && MapView.MapIsEnabled));
+        }
+
+        private void SyncVisibility()
+        {
+            if (_parent == null) return;
+            bool want = InVisibleContext();
+            if (_parent.gameObject.activeSelf != want)
+                _parent.gameObject.SetActive(want);
+        }
+
         // -------- Camera-synced update (no warp ghosting) --------
         private void OnCamPreCull(Camera cam)
         {
+            // keep root state in sync even if nothing else runs
+            SyncVisibility();
+
             // run only when a save is active and we are in a relevant scene
             if (!SessionGate.Ready) return;
             if (!(HighLogic.LoadedScene == GameScenes.TRACKSTATION ||
@@ -245,7 +260,6 @@ namespace SimpleMultiplayer
                   || (HighLogic.LoadedScene == GameScenes.FLIGHT && MapView.MapIsEnabled)))
                 yield break;
 
-
             if (!www.isNetworkError && !www.isHttpError)
                 ApplySnapshot(www.downloadHandler.text);
         }
@@ -271,7 +285,6 @@ namespace SimpleMultiplayer
                     if (body == null) continue;
                     if (rec.Ecc >= 1.0) continue;
 
-                    // AFTER
                     var ecc = rec.Ecc;
                     if (ecc < 0) ecc = 0;
                     if (ecc >= 1.0) ecc = 0.999999999; // keep elliptical
@@ -281,22 +294,21 @@ namespace SimpleMultiplayer
                         rec.SMA,
                         rec.LanDeg,
                         rec.ArgpDeg,
-                        rec.MnaRad,                    // ✅ radians
+                        rec.MnaRad,                    // radians
                         rec.EpochUT,
                         body);
 
-                    var key = rec.User; // P0: one per user
+                    var key = rec.User; // one per user
                     seen.Add(key);
 
                     RemoteMarker mk;
                     if (!_markers.TryGetValue(key, out mk))
                     {
-                        mk = new RemoteMarker(_parent, _lineMat, _scaledLayer, rec.User, rec.Vessel, rec.Color, Visual.Segments); // <- +rec.Vessel
+                        mk = new RemoteMarker(_parent, _lineMat, _scaledLayer, rec.User, rec.Vessel, rec.Color, Visual.Segments);
                         _markers[key] = mk;
                     }
                     mk.SetOrbit(orbit, rec.EpochUT);
-                    mk.SetVessel(rec.Vessel); // <- keep label fresh if vessel name changes
-
+                    mk.SetVessel(rec.Vessel); // keep label fresh if vessel name changes
                 }
             }
 
@@ -311,6 +323,9 @@ namespace SimpleMultiplayer
         // -------- IMGUI window (like Main.cs) --------
         private void Update()
         {
+            // keep visibility correct when closing Map View
+            SyncVisibility();
+
             if (Input.GetKeyDown(KeyCode.F8))
                 _showMenu = !_showMenu;
         }
@@ -563,7 +578,6 @@ namespace SimpleMultiplayer
                 }
             }
 
-
             public static bool TryParse(string line, out OrbitRecord rec)
             {
                 rec = default(OrbitRecord);
@@ -616,6 +630,7 @@ namespace SimpleMultiplayer
             private readonly Color _baseColor;
             private Vector3 _lastScreen; // from cam.WorldToScreenPoint(...)
             private double _snapshotUT;
+
             public RemoteMarker(Transform parent, Material lineMat, int scaledLayer, string user, string vessel, Color color, int segments)
             {
                 _segments = segments;
@@ -633,7 +648,7 @@ namespace SimpleMultiplayer
                 // Directional gradient: head bright -> tail fades
                 BuildGradient(color);
                 _lr.colorGradient = _grad;
-                // User Names
+
                 _user = user;
                 _vessel = vessel ?? "";
                 _baseColor = color;
@@ -646,14 +661,15 @@ namespace SimpleMultiplayer
                 var mat = new Material(Shader.Find("Unlit/Color")); mat.color = color;
                 mr.sharedMaterial = mat;
             }
+
             public void SetVessel(string vessel) { _vessel = vessel ?? ""; }
+
             public void SetOrbit(Orbit orbit, double snapshotUT)
             {
                 _orbit = orbit;
                 _snapshotUT = snapshotUT;
                 RebuildWorldLine(); // keep your existing path builder
             }
-
 
             public void SetSegments(int segments)
             {
@@ -683,7 +699,6 @@ namespace SimpleMultiplayer
                 RebuildWorldLine(scaledNow);
             }
 
-
             // ---- Overload #1: compute head (used by SetOrbit/SetSegments) ----
             private void RebuildWorldLine()
             {
@@ -700,7 +715,6 @@ namespace SimpleMultiplayer
 
                 RebuildWorldLine(scaledNow);
             }
-
 
             // ---- Overload #2: take head explicitly (used each frame in Tick) ----
             private void RebuildWorldLine(Vector3 scaledHead)
@@ -753,15 +767,15 @@ namespace SimpleMultiplayer
                 _grad.SetKeys(
                     new[]
                     {
-                new GradientColorKey(tail, 0.00f),
-                new GradientColorKey(mid,  0.25f),
-                new GradientColorKey(head, 1.00f),
+                        new GradientColorKey(tail, 0.00f),
+                        new GradientColorKey(mid,  0.25f),
+                        new GradientColorKey(head, 1.00f),
                     },
                     new[]
                     {
-                new GradientAlphaKey(tail.a, 0.00f),
-                new GradientAlphaKey(mid.a,  0.25f),
-                new GradientAlphaKey(head.a, 1.00f),
+                        new GradientAlphaKey(tail.a, 0.00f),
+                        new GradientAlphaKey(mid.a,  0.25f),
+                        new GradientAlphaKey(head.a, 1.00f),
                     }
                 );
             }
@@ -776,9 +790,7 @@ namespace SimpleMultiplayer
             public string UserName => _user;
             public string LabelText => string.IsNullOrEmpty(_vessel) ? _user : (_user + " — " + _vessel);
             public Color UserColor => _baseColor;
-
         }
-
 
         private static Color HashColor(string s)
         {
