@@ -586,15 +586,19 @@ def _online_users():
 @app.route('/vote/start/<save>/<tech>', methods=['POST'])
 def vote_start(save, tech):
     data = request.get_json(force=True, silent=True) or {}
-    requester = data.get('user','Player')
+    requester = data.get('user','Player').strip()
     title = data.get('title', tech)
     cost  = float(data.get('cost', 0.0))
     k = _key(save, tech)
     online_cnt = max(0, len(_online_users()))
-    quorum = 1 if online_cnt <= 1 else 2
-    VOTES[k] = {'title': title, 'requester': requester, 'cost': cost,
-                'votes': {}, 'opened': time.time(), 'closed': False,
-                'approved': None, 'quorum': quorum}
+    online = [u for u in _online_users() if u != requester]
+    quorum = 1 if len(online) == 0 else 2
+    VOTES[k] = {
+        'title': title, 'requester': requester, 'cost': cost,
+        'votes': {}, 'opened': time.time(),
+        'closed': False, 'approved': None,
+        'quorum': 2   # fixed; cast-time logic handles the 1-player case
+    }
     return 'OK', 200
 
 @app.route('/vote/cast/<save>/<tech>', methods=['POST'])
@@ -603,17 +607,26 @@ def vote_cast(save, tech):
     user = (data.get('user') or 'Player').strip()
     vraw = data.get('vote', False)
     vote = vraw if isinstance(vraw, bool) else str(vraw).strip().lower() in ('1','true','yes','y','t')
+
     k = _key(save, tech)
-    if k not in VOTES or VOTES[k].get('closed'):
+    v = VOTES.get(k)
+    if not v or v.get('closed'):
         return 'No open vote', 400
-    VOTES[k]['votes'][user] = vote
-    yes = sum(1 for v in VOTES[k]['votes'].values() if v)
-    no  = sum(1 for v in VOTES[k]['votes'].values() if not v)
-    n   = yes + no
-    quorum = int(VOTES[k].get('quorum', 2))
-    if n >= quorum:
-        VOTES[k]['closed'] = True
-        VOTES[k]['approved'] = (yes > no)
+
+    v['votes'][user] = vote
+
+    yes = sum(1 for x in v['votes'].values() if x)
+    no  = sum(1 for x in v['votes'].values() if not x)
+
+    req = v.get('requester')
+    # dynamic quorum: if anyone besides requester is online NOW, require at least one non-requester vote
+    others_online   = any(u != req for u in _online_users())
+    has_other_voter = any(voter != req for voter in v['votes'].keys())
+
+    close_ok = (not others_online) or has_other_voter
+    if close_ok:
+        v['closed'] = True
+        v['approved'] = (yes > no)
     return 'OK', 200
 
 @app.route('/vote/status/<save>/<tech>', methods=['GET'])
@@ -644,18 +657,31 @@ def vote_open(save):
 
 @app.route('/vote/cancel/<save>/<tech>', methods=['POST'])
 def vote_cancel(save, tech):
-    data = request.get_json(force=True, silent=True) or {}
-    user = (data.get('user') or 'Player').strip()
     k = _key(save, tech)
     v = VOTES.get(k)
     if not v:
-        return 'No vote', 200
-    if user == v.get('requester'):
-        v['closed'] = True
-        v['approved'] = False
+        return 'No vote', 400
+    v['closed'] = True
+    v['approved'] = False
     return 'OK', 200
 
 # ---------- orbits ----------
+# Requirements:
+# - POST /orbits/<save_id> accepts a single CSV line and always overwrites the user's file.
+#   It stamps updatedUT with server time to avoid KSP UT reverts blocking updates.
+# - GET  /orbits/<save_id>.txt lists only fresh files by updatedUT within ORBIT_TTL.
+# - A background janitor deletes files only when BOTH the orbit line and presence are stale,
+#   and presence is not in an allowed scene. Prevents create/delete flicker.
+#
+# Expects: ORBIT_FOLDER (str), PRESENCE (dict-like), Flask 'app', request, jsonify.
+
+ORBIT_TTL = 180                 # seconds visibility + deletion threshold
+ORBIT_JANITOR_INTERVAL = 60     # seconds between cleanups
+ALLOWED_SCENES = {"FLIGHT", "TRACKSTATION"}  # scenes that keep orbit files alive
+
+def _now_unix() -> float:
+    return time.time()
+
 def _safe_seg(s: str) -> str:
     s = (s or "").strip()
     return "".join(c for c in s if c.isalnum() or c in "_-.")
@@ -666,68 +692,149 @@ def _orbit_dir(save_id: str) -> str:
 def _user_path(save_id: str, user: str) -> str:
     return os.path.join(_orbit_dir(save_id), _safe_seg(user) + ".txt")
 
+def _read_orbit_line(path: str):
+    """Return (user, updatedUT, line) or (None, None, None) on parse error."""
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            line = f.readline().strip()
+        if not line or ',' not in line:
+            return None, None, None
+        parts = line.split(',')
+        if len(parts) < 12:
+            return None, None, None
+        user = parts[0].strip()
+        updated = float(parts[11])
+        return user, updated, line
+    except Exception:
+        return None, None, None
+
 @app.route('/orbits/<save_id>', methods=['POST'])
 def post_orbit(save_id):
+    """
+    Accept exactly one CSV line:
+    user,vessel,body,epochUT,sma,ecc,inc_deg,lan_deg,argp_deg,mna_rad,colorHex,updatedUT
+    Always overwrite and stamp updatedUT with server time to survive Revert/UT jumps.
+    """
     raw = (request.get_data(as_text=True) or "").strip()
     if not raw or ',' not in raw:
         return ("bad request", 400)
     parts = raw.split(',')
     if len(parts) < 12:
         return ("bad csv", 400)
-    user = parts[0].strip()
-    try:
-        updated = float(parts[11])
-    except Exception:
-        updated = 0.0
+
+    user = (parts[0] or "").strip()
+    if not user:
+        return ("missing user", 400)
+
+    # Force updatedUT to server time
+    parts[11] = f"{_now_unix():.3f}"
+    line = ",".join(parts)
+
     d = _orbit_dir(save_id)
     os.makedirs(d, exist_ok=True)
     upath = _user_path(save_id, user)
-    prev_updated = -1.0
-    if os.path.exists(upath):
-        try:
-            with open(upath, 'r', encoding='utf-8') as f:
-                prev = f.read().strip()
-            if prev and ',' in prev:
-                p2 = prev.split(',')
-                if len(p2) >= 12:
-                    prev_updated = float(p2[11])
-        except Exception:
-            prev_updated = -1.0
-    if updated >= prev_updated:
-        with open(upath, 'w', encoding='utf-8') as f:
-            f.write(raw.strip() + "\n")
+
+    with open(upath, 'w', encoding='utf-8') as f:
+        f.write(line + "\n")
+
     return jsonify(ok=True)
 
 @app.route('/orbits/<save_id>.txt', methods=['GET'])
 def get_orbits(save_id):
+    """
+    Visibility: show any user orbit whose updatedUT (server-stamped) is within ORBIT_TTL.
+    Presence is NOT consulted here to avoid hiding fresh uploads due to presence lag.
+    """
     d = _orbit_dir(save_id)
     if not os.path.isdir(d):
-        return ("# empty\n", 200, {'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store'})
+        return ("# empty\n", 200, {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'no-store'
+        })
+
+    now = _now_unix()
     merged = {}
+
     for fn in os.listdir(d):
         if not fn.lower().endswith(".txt"):
             continue
         path = os.path.join(d, fn)
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                line = f.readline().strip()
-            if not line or ',' not in line:
-                continue
-            parts = line.split(',')
-            if len(parts) < 12:
-                continue
-            user = parts[0].strip()
-            updated = float(parts[11])
-            prev = merged.get(user)
-            if prev is None or updated >= prev[0]:
-                merged[user] = (updated, line)
-        except Exception:
+        user, updated, line = _read_orbit_line(path)
+        if not user:
             continue
+
+        # Only show if the orbit is fresh
+        if (now - float(updated)) > ORBIT_TTL:
+            continue
+
+        prev = merged.get(user)
+        if prev is None or updated >= prev[0]:
+            merged[user] = (updated, line)
+
     out_lines = ["# user,vessel,body,epochUT,sma,ecc,inc_deg,lan_deg,argp_deg,mna_rad,colorHex,updatedUT"]
     for _, line in sorted(merged.values(), key=lambda t: t[0], reverse=True):
         out_lines.append(line)
     body = "\n".join(out_lines) + "\n"
-    return (body, 200, {'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store'})
+    return (body, 200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-store'
+    })
+
+# ---- janitor: runs in background every ORBIT_JANITOR_INTERVAL seconds ----
+def _orbit_janitor_loop():
+    """
+    Deletes per-user orbit files only when BOTH are true:
+      1) The orbit line's updatedUT is older than ORBIT_TTL
+      2) Presence is missing, not in ALLOWED_SCENES, or presence itself is older than ORBIT_TTL
+    Keeps files during FLIGHT and TRACKSTATION, prevents create/delete flicker.
+    """
+    while True:
+        try:
+            now = _now_unix()
+            pmap = dict(globals().get('PRESENCE') or {})
+
+            # Ensure root folder exists
+            if not os.path.isdir(ORBIT_FOLDER):
+                time.sleep(ORBIT_JANITOR_INTERVAL)
+                continue
+
+            for save_id in os.listdir(ORBIT_FOLDER):
+                d = _orbit_dir(save_id)
+                if not os.path.isdir(d):
+                    continue
+                for fn in os.listdir(d):
+                    if not fn.lower().endswith(".txt"):
+                        continue
+                    path = os.path.join(d, fn)
+                    user, updated, _line = _read_orbit_line(path)
+                    if not user:
+                        # unreadable -> delete safely
+                        try: os.remove(path)
+                        except: pass
+                        continue
+
+                    # Presence snapshot
+                    p = pmap.get(user) or {}
+                    scene = str(p.get('scene', '')).upper()
+                    p_updated = float(p.get('updated', 0) or p.get('ut_epoch', 0) or 0)
+
+                    stale_orbit = (updated is None) or ((now - float(updated)) > ORBIT_TTL)
+                    ok_scene = scene in ALLOWED_SCENES
+                    stale_presence = (not p) or (not ok_scene) or ((now - p_updated) > ORBIT_TTL)
+
+                    if stale_orbit and stale_presence:
+                        try: os.remove(path)
+                        except: pass
+        except Exception:
+            pass
+        time.sleep(ORBIT_JANITOR_INTERVAL)
+
+# start janitor once
+try:
+    _ORBIT_JANITOR_STARTED
+except NameError:
+    _ORBIT_JANITOR_STARTED = True
+    threading.Thread(target=_orbit_janitor_loop, daemon=True).start()
 
 # ---------- presence ----------
 PRESENCE_LOCK = threading.RLock()
